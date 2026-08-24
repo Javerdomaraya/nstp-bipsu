@@ -7,6 +7,8 @@ import {
   getDatabaseStatus,
   listAdminResource,
   listManagedModules,
+  MODULE_ACCESS,
+  listCoordinatorTrainingGroups,
   listPublishedModules,
   createManagedModule,
   updateManagedModule,
@@ -49,7 +51,20 @@ function adminResourceHandlers(resource) {
       if (!Array.isArray(records) || records.length === 0) {
         return sendError(res, 'Expected a non-empty array of records.', 400);
       }
-      const results = await batchUpsertAdminResources(resource, records);
+      let results;
+      try {
+        results = await batchUpsertAdminResources(resource, records);
+      } catch (error) {
+        // A batch rejected for an unresolvable component is reported with the
+        // offending row positions so the operator can correct the source file.
+        // Nothing was written, so this is a clean 400 rather than a partial 207.
+        if (error?.code === 'INVALID_COMPONENT') {
+          return res.status(400).json({
+            success: false, error: error.message, code: error.code, upserted: 0, rows: error.rows || [],
+          });
+        }
+        throw error;
+      }
       const failed = results.filter((entry) => entry?.error);
       emitCollectionChange(resource, 'batch-upserted');
       if (failed.length) {
@@ -77,7 +92,9 @@ export const adminComponentState = adminResourceHandlers('component-state');
 export const adminAuditLog = adminResourceHandlers('audit-log');
 
 export async function listAdminModules(req, res) {
-  return res.json(await listManagedModules());
+  // Administrator reads are unrestricted, and say so. The route already enforces
+  // requireRole('ADMIN').
+  return res.json(await listManagedModules({ mode: MODULE_ACCESS.UNRESTRICTED }));
 }
 
 export async function createAdminModule(req, res) {
@@ -99,7 +116,12 @@ export async function removeAdminModule(req, res) {
 }
 
 export async function listCoordinatorModules(req, res) {
-  return res.json(await listManagedModules(null, null, [], req.coordinator.allowedComponentIds));
+  // Component-restricted. If the middleware ever resolved an empty component
+  // list this returns nothing, not everything.
+  return res.json(await listManagedModules({
+    mode: MODULE_ACCESS.COMPONENTS,
+    componentIds: req.coordinator.allowedComponentIds,
+  }));
 }
 
 export async function createCoordinatorModule(req, res) {
@@ -125,7 +147,11 @@ export async function listStudentModules(req, res) {
 }
 
 export async function listInstructorModules(req, res) {
-  return res.json(await listManagedModules(null, req.instructor.id, (req.instructor.sections || []).map((section) => section.componentId)));
+  return res.json(await listManagedModules({
+    mode: MODULE_ACCESS.INSTRUCTOR,
+    instructorId: req.instructor.id,
+    componentIds: (req.instructor.sections || []).map((section) => section.componentId),
+  }));
 }
 
 const adminActor = (req) => ({ userId: req.user.id, name: req.user.name || 'Administrator', role: 'ADMIN' });
@@ -339,15 +365,50 @@ export async function listInstructorClassStudents(req, res) {
   return sendSuccess(res, students);
 }
 
+// The `where` clause below is the only scope authority: allowedComponentIds is
+// re-derived from the database by getCurrentCoordinator on every request and is
+// never taken from the client. The extra `include`s only add the component and
+// section labels the coordinator UI needs so it does not have to fetch the
+// unscoped student list and filter in the browser.
 export async function listCoordinatorStudents(req, res) {
   const students = await prisma.studentProfile.findMany({
     where: { componentId: { in: req.coordinator.allowedComponentIds } },
-    include: { user: { select: { id: true, name: true, email: true, data: true } } },
+    include: {
+      user: { select: { id: true, name: true, email: true, data: true } },
+      component: { select: { id: true, type: true, name: true } },
+      section: { select: { id: true, code: true, name: true, schoolYear: true, semester: true } },
+      _count: {
+        select: {
+          moduleProgress: { where: { completedAt: { not: null } } },
+          submissions: true,
+        },
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }],
   });
   return sendSuccess(res, students);
 }
 
 export async function listCoordinatorClasses(req, res) {
-  const sections = await prisma.section.findMany({ where: { componentId: { in: req.coordinator.allowedComponentIds } } });
+  const sections = await prisma.section.findMany({
+    where: { componentId: { in: req.coordinator.allowedComponentIds } },
+    include: {
+      component: { select: { id: true, type: true, name: true } },
+      instructor: { select: { id: true, user: { select: { id: true, name: true, email: true } } } },
+      _count: { select: { students: true } },
+    },
+    orderBy: [{ schoolYear: 'desc' }, { code: 'asc' }],
+  });
   return sendSuccess(res, sections);
+}
+
+/**
+ * Coordinator-scoped training groups. Follows the same chain as the students and
+ * classes handlers above: `authenticate` -> `requireRole('COORDINATOR')` ->
+ * `getCurrentCoordinator` (which re-derives `allowedComponentIds` from the
+ * database) -> a component-restricted query. The client receives only its own
+ * program's rows; nothing is narrowed in the browser.
+ */
+export async function listCoordinatorTrainingGroupsController(req, res) {
+  return sendSuccess(res, await listCoordinatorTrainingGroups(req.coordinator.allowedComponentIds));
 }

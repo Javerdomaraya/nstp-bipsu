@@ -1,5 +1,6 @@
 import prisma from '../../db/prisma.js';
 import { sendError } from '../../utils/apiResponse.js';
+import { COORDINATOR_SCOPE_TYPES } from '../staff/staff.service.js';
 
 export async function getCurrentStudent(req, res, next) {
   const student = await prisma.studentProfile.findUnique({
@@ -29,12 +30,26 @@ export async function getCurrentCoordinator(req, res, next) {
   });
 
   if (!coordinator || (coordinator.user?.status && coordinator.user.status !== 'ACTIVE')) return sendError(res, 'Coordinator account is not active.', 403);
+  // Legacy single-component coordinators (rows predating the scope column) are
+  // still honoured via their explicit componentId. `allowedComponentTypes` is
+  // deliberately `null` and not `[]` on this branch: the component *type* is not
+  // loaded here, and an empty array is indistinguishable from a real allow-list
+  // that permits nothing — a consumer treating it as "no restriction" would be a
+  // fail-open. `null` makes the absence explicit, and any caller that tried to
+  // use it as an allow-list would throw rather than widen. Nothing in the
+  // backend reads it today; `allowedComponentIds` is the scope authority and is
+  // never empty (this branch is guarded on a truthy componentId).
   if (!coordinator.scope && coordinator.componentId) {
-    req.coordinator = { ...coordinator, allowedComponentIds: [coordinator.componentId], allowedComponentTypes: [] };
+    req.coordinator = { ...coordinator, allowedComponentIds: [coordinator.componentId], allowedComponentTypes: null };
     return next();
   }
-  const scopeTypes = coordinator.scope === 'MTS' ? ['MTS_ARMY', 'MTS_NAVY']
-    : coordinator.scope === 'LTS' ? ['LTS'] : ['CWTS', 'CWTS_COAST_GUARD'];
+  // The scope map is imported rather than re-declared so this middleware and the
+  // staff service can never disagree about which component types a program owns.
+  // An unset or unrecognised scope is refused outright: falling through to CWTS
+  // would silently grant a coordinator authority over a component they were
+  // never assigned.
+  const scopeTypes = COORDINATOR_SCOPE_TYPES[coordinator.scope];
+  if (!scopeTypes) return sendError(res, 'Coordinator component scope is not assigned. Ask an administrator to set your NSTP component program.', 403);
   const components = await prisma.nSTPComponent.findMany({ where: { type: { in: scopeTypes } }, select: { id: true, type: true } });
   if (components.length !== scopeTypes.length) return sendError(res, 'Coordinator component scope is not fully configured.', 403);
   req.coordinator = { ...coordinator, allowedComponentIds: components.map((component) => component.id), allowedComponentTypes: scopeTypes };

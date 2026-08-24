@@ -1,5 +1,5 @@
 import { apiGet, apiPatch, apiPost } from './apiClient';
-import type { BiliranMunicipality, CoordinatorScope, NstpComponent, StaffAccountStatus } from '../data/nstpData';
+import type { BiliranMunicipality, CoordinatorScope, NstpAccount, NstpComponent, StaffAccountStatus } from '../data/nstpData';
 
 type ApiEnvelope<T> = { success: boolean; data: T };
 
@@ -50,6 +50,23 @@ export type FacilitatorInput = StaffIdentityInput & {
   municipalities: BiliranMunicipality[];
 };
 
+/**
+ * DISPLAY-ONLY metadata: which component options a coordinator of each program is
+ * *offered* in a form, and which labels the dashboards print.
+ *
+ * This map grants nothing. The authorization authority is
+ * `COORDINATOR_SCOPE_TYPES` in `backend/src/modules/staff/staff.service.js`; the
+ * server re-derives the coordinator's components from the database on every
+ * request (`getCurrentCoordinator`) and re-checks each write against that map
+ * (`requireAllowedComponent`), so editing this list in the browser produces a 403
+ * rather than access to another program.
+ *
+ * The duplication is deliberate — sharing one file would either ship server
+ * authorization code to the browser or make the server read from the frontend
+ * workspace, and the frontend must never be treated as authorization authority.
+ * `backend/test/scope-mapping-drift.test.js` compares the two as text and fails
+ * if they diverge.
+ */
 export const SCOPE_COMPONENT_TYPES: Record<CoordinatorScope, FacilitatorRecord['component'][]> = {
   CWTS: ['CWTS', 'CWTS_COAST_GUARD'],
   MTS: ['MTS_ARMY', 'MTS_NAVY'],
@@ -59,6 +76,29 @@ export const SCOPE_COMPONENT_TYPES: Record<CoordinatorScope, FacilitatorRecord['
 export const COMPONENT_TYPE_LABELS: Record<FacilitatorRecord['component'], NstpComponent> = {
   CWTS: 'CWTS', LTS: 'LTS', MTS_ARMY: 'MTS (Army)', MTS_NAVY: 'MTS (Navy)', CWTS_COAST_GUARD: 'CWTS (Coast Guard)',
 };
+
+/**
+ * Adapts a coordinator-scoped facilitator record to the `NstpAccount` shape the
+ * shared dashboards and report tables render. Kept here rather than in each
+ * screen so the two coordinator surfaces cannot disagree on the component label
+ * or the status field. No password is ever carried over.
+ */
+export function facilitatorRecordToAccount(facilitator: FacilitatorRecord): NstpAccount {
+  return {
+    id: facilitator.id,
+    name: facilitator.name,
+    email: facilitator.email,
+    password: '',
+    role: 'facilitator',
+    employeeNumber: facilitator.employeeNumber,
+    title: facilitator.title,
+    contactNumber: facilitator.contactNumber,
+    componentId: facilitator.componentId,
+    component: COMPONENT_TYPE_LABELS[facilitator.component],
+    municipalities: facilitator.municipalities,
+    accountStatus: facilitator.status,
+  };
+}
 
 export async function fetchAdminCoordinators(filters: { search?: string; scope?: CoordinatorScope; status?: StaffAccountStatus; page?: number; pageSize?: number } = {}) {
   const query = new URLSearchParams();

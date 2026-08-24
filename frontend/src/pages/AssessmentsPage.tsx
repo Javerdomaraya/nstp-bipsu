@@ -3,8 +3,9 @@ import { FileText, CheckCircle, Clock, Award, TrendingUp, History, AlertTriangle
 import { replaceAssessmentsSnapshot, NstpAssessment } from '../data/nstpData';
 import { apiGet, apiPost } from '../services/apiClient';
 import { fetchStudentAssessments } from '../services/assessments';
+import type { AuthenticatedUser } from '../services/authUser';
 
-export default function AssessmentsPage({ user, onBack }: { user: any; onBack?: () => void }) {
+export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedUser; onBack?: () => void }) {
   const [library, setLibrary] = useState<NstpAssessment[]>([]);
   const [results, setResults] = useState<Record<string, any>>({});
   const [activeAssessment, setActiveAssessment] = useState<NstpAssessment | null>(null);

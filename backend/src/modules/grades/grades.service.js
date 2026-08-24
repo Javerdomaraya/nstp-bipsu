@@ -75,7 +75,7 @@ export async function listAdminSemesterGrades(filters) {
     schoolYear: { not: null }, semester: { not: null },
     ...(direct.schoolYear ? { schoolYear: direct.schoolYear } : {}),
     ...(direct.semester ? { semester: direct.semester } : {}),
-    ...(componentIds ? { componentId: { in: componentIds } } : direct.componentId ? { componentId: direct.componentId } : {}),
+    ...(Array.isArray(componentIds) ? { componentId: { in: componentIds } } : direct.componentId ? { componentId: direct.componentId } : {}),
     ...(status ? { isReleased: status === 'RELEASED' } : {}),
     ...(search ? { student: { OR: [
       { studentNumber: { contains: search, mode: 'insensitive' } },
@@ -175,9 +175,16 @@ export async function createSemesterGrade(actorId, payload) {
   }));
 }
 
+/**
+ * `scope` is an administrator-only widening point: the only route that reaches
+ * this function is `PATCH /admin/grades/:id` (ADMIN role), so the default `{}`
+ * means "no component restriction" by design. If a coordinator write path is
+ * ever added it must pass `{ componentIds: [...] }` explicitly — an omitted list
+ * must never be read as unrestricted for a scoped role.
+ */
 export async function updateSemesterGrade(actorId, id, patch, scope = {}) {
   return withGradeDatabase(() => prisma.$transaction(async (tx) => {
-    const existing = await tx.grade.findFirst({ where: { id, ...(scope.componentIds ? { componentId: { in: scope.componentIds } } : {}) } });
+    const existing = await tx.grade.findFirst({ where: { id, ...(Array.isArray(scope.componentIds) ? { componentId: { in: scope.componentIds } } : {}) } });
     if (!existing || !existing.semester || !existing.schoolYear) throw httpError('Semester grade not found.', 404);
     if (existing.isReleased) throw httpError('Return the grade to hold before editing it.', 409);
     const { gradeInput, ...otherPatch } = patch;
@@ -234,8 +241,21 @@ export async function saveInstructorSemesterGrade(actorId, instructor, section, 
   }));
 }
 
+/**
+ * Coordinator view of semester grades, restricted in the query to the component
+ * ids the server derived for this coordinator.
+ *
+ * The array is required. `listAdminSemesterGrades` reads "no componentIds" as an
+ * administrator's unrestricted request, so passing `undefined`/`null` here would
+ * turn a coordinator with an unresolved scope into an unrestricted reader. An
+ * empty array stays empty: `in: []` matches no rows, which is the correct
+ * reading of "no components authorised".
+ */
 export async function listCoordinatorSemesterGrades(componentIds, filters) {
-  return listAdminSemesterGrades({ ...filters, componentId: undefined, componentIds });
+  if (!Array.isArray(componentIds)) {
+    throw new Error('listCoordinatorSemesterGrades requires an array of authorised component ids.');
+  }
+  return listAdminSemesterGrades({ ...filters, componentId: undefined, componentIds: componentIds.filter(Boolean) });
 }
 
 export async function listReleasedStudentSemesterGrades(studentId) {

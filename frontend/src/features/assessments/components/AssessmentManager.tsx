@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Save, Eye, EyeOff, UserPlus, BookOpen, Clock3, MessageSquareText, ChevronUp, ChevronDown, LayoutPanelLeft, Sparkles } from 'lucide-react';
-import { createEmptyAssessment, loadAccounts, replaceAssessmentsSnapshot, NstpAccount, NstpAssessment, NstpModule, NstpQuestion } from '../../../data/nstpData';
+import { createEmptyAssessment, loadAccounts, replaceAssessmentsSnapshot, type AssessmentOwner, NstpAccount, NstpAssessment, NstpModule, NstpQuestion } from '../../../data/nstpData';
 import { fetchManagedModules } from '../../../services/modules';
 import {
   createManagedAssessment, fetchAssessmentAttempts, fetchManagedAssessments,
@@ -9,7 +9,13 @@ import {
 } from '../../../services/assessments';
 
 type Props = {
-  user: NstpAccount;
+  /**
+   * The signed-in author of new drafts — id, name and role, nothing more. It was
+   * `NstpAccount`, which no session object can satisfy (that type requires
+   * `password`), so callers cast their session to it and lost all checking on the
+   * fields this screen actually touches.
+   */
+  user: AssessmentOwner;
   role: 'admin' | 'coordinator' | 'facilitator';
 };
 
@@ -20,7 +26,7 @@ const emptyQuestion = (): NstpQuestion => ({
   correctIndex: 0,
 });
 
-const emptyForm = (user: NstpAccount): NstpAssessment => createEmptyAssessment(user);
+const emptyForm = (user: AssessmentOwner): NstpAssessment => createEmptyAssessment(user);
 
 type AttemptStatus = 'passed' | 'failed' | 'review';
 
@@ -49,12 +55,24 @@ export default function AssessmentManager({ user, role }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
+  // A coordinator's assessment list is restricted to their own components by the
+  // API, so it must not be written into the shared `nstp-assessment-library`
+  // snapshot that the admin screens and shell counters read as the whole
+  // programme. It lives in this component's state instead. (The facilitator list
+  // is also a subset; that path writes its own snapshot in FacilitatorDashboard
+  // and is tracked separately.)
+  const isComponentScoped = role === 'coordinator';
+
   useEffect(() => {
-    setAccounts(loadAccounts());
+    // The accounts snapshot is admin-populated and is only used by the
+    // administrator's "Assign Facilitator Owner" picker below, so no other role
+    // reads it.
+    if (role === 'admin') setAccounts(loadAccounts());
+    else setAccounts([]);
     Promise.all([fetchManagedAssessments(role), fetchManagedModules(role)])
       .then(([items, moduleRows]) => {
         setAssessments(items);
-        replaceAssessmentsSnapshot(items);
+        if (!isComponentScoped) replaceAssessmentsSnapshot(items);
         setModules(moduleRows.filter((module) => module.status !== 'ARCHIVED'));
         if (items.length > 0) setGlobalPassingScore(items[0].passingScore);
         setError(null);
@@ -63,7 +81,7 @@ export default function AssessmentManager({ user, role }: Props) {
     if (role === 'admin') {
       fetchAssessmentAttempts().then(setAttempts).catch((requestError) => setError(requestError instanceof Error ? requestError.message : 'Unable to load assessment attempts.'));
     }
-  }, [role]);
+  }, [isComponentScoped, role]);
 
   const ownedAssessments = useMemo(() => assessments, [assessments]);
 
@@ -77,7 +95,7 @@ export default function AssessmentManager({ user, role }: Props) {
         ? assessments.map((item) => (item.id === saved.id ? saved : item))
         : [saved, ...assessments];
       setAssessments(nextList);
-      replaceAssessmentsSnapshot(nextList);
+      if (!isComponentScoped) replaceAssessmentsSnapshot(nextList);
       setEditingId(null);
       setForm(null);
       setError(null);
@@ -106,7 +124,7 @@ export default function AssessmentManager({ user, role }: Props) {
         ? assessments.map((item) => item.id === assessmentId ? { ...item, status: 'archived' as const } : item)
         : assessments.filter((item) => item.id !== assessmentId);
       setAssessments(nextList);
-      replaceAssessmentsSnapshot(nextList);
+      if (!isComponentScoped) replaceAssessmentsSnapshot(nextList);
       if (editingId === assessmentId) { setEditingId(null); setForm(null); }
       setError(null);
     } catch (requestError) {
@@ -170,7 +188,7 @@ export default function AssessmentManager({ user, role }: Props) {
       const savedEditable = await Promise.all(editableAssessments.map((assessment) => updateManagedAssessment(role, assessment)));
       const saved = nextAssessments.map((assessment) => savedEditable.find((item) => item.id === assessment.id) || assessment);
       setAssessments(saved);
-      replaceAssessmentsSnapshot(saved);
+      if (!isComponentScoped) replaceAssessmentsSnapshot(saved);
       setAttempts((current) => current.map((attempt) => {
         const assessment = saved.find((item) => item.id === attempt.assessmentId);
         return assessment && !attempt.manualStatus ? { ...attempt, passed: attempt.score >= assessment.passingScore } : attempt;

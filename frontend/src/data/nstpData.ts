@@ -1,8 +1,15 @@
 import { ApiRequestError, apiGet, apiPost, apiDel } from '../services/apiClient';
+import { toCoordinatorScope, toNstpComponent, type CoordinatorScope, type NstpComponent } from './nstpComponents';
+
+// The component and coordinator-scope vocabularies live in their own
+// dependency-free module so the security-critical parsers can be imported (and
+// tested) without pulling in the API client. Re-exported here because they are
+// part of this module's public surface and every screen already imports them
+// from `nstpData`.
+export { NSTP_COMPONENTS, toNstpComponent, UNASSIGNED_COMPONENT_LABEL, COORDINATOR_SCOPES, toCoordinatorScope } from './nstpComponents';
+export type { NstpComponent, CoordinatorScope } from './nstpComponents';
 
 export type NstpRole = 'admin' | 'coordinator' | 'student' | 'facilitator';
-export type NstpComponent = 'CWTS' | 'LTS' | 'MTS (Army)' | 'MTS (Navy)' | 'CWTS (Coast Guard)';
-export type CoordinatorScope = 'CWTS' | 'MTS' | 'LTS';
 export type StaffAccountStatus = 'ACTIVE' | 'SUSPENDED';
 export type BiliranMunicipality = 'Almeria' | 'Biliran' | 'Cabucgayan' | 'Caibiran' | 'Culaba' | 'Kawayan' | 'Maripipi' | 'Naval';
 
@@ -47,6 +54,15 @@ export type NstpAccount = {
   accountStatus?: StaffAccountStatus;
   _version?: number;
 };
+
+/**
+ * Everything `createEmptyAssessment` needs from the account that owns a draft.
+ *
+ * Narrower than `NstpAccount` on purpose: the assessment author is identified by
+ * id, name and role only, so screens that hold a session (which carries no
+ * `password`) can create drafts without being handed a full account record.
+ */
+export type AssessmentOwner = Pick<NstpAccount, 'id' | 'name' | 'role'>;
 
 export type PendingStudentRegistration = {
   id: string;
@@ -154,7 +170,13 @@ export type NstpStudent = {
   cityAddress?: string;
   provincialAddress?: string;
   contactNumber?: string;
-  component: NstpComponent;
+  /**
+   * `null` means "no component assigned yet" and must be rendered as such.
+   * A component is never inferred or defaulted: it decides which coordinator
+   * owns the student, so a guessed value would hand a record to the wrong
+   * coordinator while looking like legitimate data. See `toNstpComponent`.
+   */
+  component: NstpComponent | null;
   municipality?: string;
   assignedMunicipality?: string;
   programSection?: string;
@@ -254,6 +276,19 @@ function removeSensitive(key: string) {
   runtimeStore.delete(key);
 }
 
+/**
+ * Drops every session-only record held by this module.
+ *
+ * These snapshots live in `runtimeStore`, not in `localStorage`, so a logout
+ * routine that purges only browser storage leaves them readable by the next
+ * account that signs in on the same tab — no page reload happens between
+ * accounts. This is the defence-in-depth half of the account-switch guarantee;
+ * the primary guarantee is that scoped roles never read or write these keys.
+ */
+export function clearSessionSnapshots() {
+  runtimeStore.clear();
+}
+
 const ADMIN_RESOURCE_MAP: Record<string, string> = {
   [ACCOUNTS_KEY]: 'accounts',
   [STUDENTS_KEY]: 'students',
@@ -349,14 +384,21 @@ export async function syncCollectionFromApi(localKey: string, query = ''): Promi
         const d = (a.data || {}) as Record<string, unknown>;
         const ip = (a.instructorProfile || {}) as Record<string, unknown>;
         const cp = (a.coordinatorProfile || {}) as Record<string, unknown>;
+        // An account with no component on the server has no component here
+        // either. The previous `|| 'CWTS'` invented a CWTS assignment for every
+        // unassigned staff row, which then read back as real CWTS data.
+        const accountComponent = toNstpComponent((ip.component as Record<string, unknown>)?.name) ?? toNstpComponent(d.component);
         return {
           id: a.id, name: a.name || '', email: a.email || '', password: '',
           role: (a.role || 'student').toLowerCase() as NstpRole,
           employeeNumber: (ip.employeeNumber as string) || (cp.employeeNumber as string) || (d.employeeNumber as string) || '',
           componentId: (ip.componentId as string) || (cp.componentId as string) || (d.componentId as string) || '',
-          coordinatorScope: (cp.scope as CoordinatorScope) || (d.coordinatorScope as CoordinatorScope) || undefined,
+          // Validated, not cast: an unrecognised scope on a staff row must read
+          // back as "no scope" so the admin screens show it as unassigned,
+          // rather than becoming a scope value the UI then treats as real.
+          coordinatorScope: toCoordinatorScope(cp.scope) ?? toCoordinatorScope(d.coordinatorScope),
           accountStatus: (a.status as StaffAccountStatus) || 'ACTIVE',
-          component: ((ip.component as Record<string, unknown>)?.name as NstpComponent) || (d.component as NstpComponent) || 'CWTS',
+          ...(accountComponent ? { component: accountComponent } : {}),
           municipalities: (ip.municipalities as string[]) || (d.municipalities as string[]) || [],
           title: (d.title as string) || '',
           contactNumber: (d.contactNumber as string) || '',
@@ -370,7 +412,10 @@ export async function syncCollectionFromApi(localKey: string, query = ''): Promi
           province: (d.province as string) || 'Biliran',
           currentAddress: d.currentAddress as string, cityAddress: d.cityAddress as string,
           provincialAddress: d.provincialAddress as string,
-          municipality: (d.municipality as BiliranMunicipality) || 'Naval',
+          // No municipality on the server means none here. `|| 'Naval'` made every
+          // unassigned staff row look like a Naval assignment, and facilitator
+          // rosters are scoped by municipality.
+          ...(typeof d.municipality === 'string' && d.municipality ? { municipality: d.municipality as BiliranMunicipality } : {}),
         };
       });
       if (mapped.length > 0) {
@@ -413,8 +458,14 @@ export async function syncCollectionFromApi(localKey: string, query = ''): Promi
           provincialAddress: (data.provincialAddress as string) || '',
           contactNumber: (data.contactNumber as string) || '',
           componentId: bs.componentId || bs.component?.id,
-          component: (bs.component?.name || 'CWTS') as NstpComponent,
-          municipality: (data.municipality as BiliranMunicipality) || 'Naval',
+          // Unassigned stays unassigned: the previous `|| 'CWTS'` made every
+          // server student without a component look like a CWTS enrolment.
+          component: toNstpComponent(bs.component?.name),
+          // Unassigned municipality stays unassigned: `FacilitatorDashboard`
+          // scopes its roster with `assignedMunicipalities.includes(...)`, so a
+          // fabricated 'Naval' would hand every unplaced student to the Naval
+          // facilitator. An empty value matches no facilitator.
+          municipality: typeof data.municipality === 'string' ? (data.municipality as BiliranMunicipality) : undefined,
           programSection: (data.degreeProgram as string) || '',
           progress: 0, assessments: 0, status: 'pending' as const,
           notes: 'Imported from server.', updatedAt: new Date().toISOString(),
@@ -479,7 +530,6 @@ export async function syncAllFromApi(): Promise<void> {
     : [];
   await Promise.allSettled(keys.map((key) => syncCollectionFromApi(key)));
 }
-export const NSTP_COMPONENTS: NstpComponent[] = ['CWTS', 'LTS', 'MTS (Army)', 'MTS (Navy)', 'CWTS (Coast Guard)'];
 export const BILIRAN_MUNICIPALITIES: BiliranMunicipality[] = ['Almeria', 'Biliran', 'Cabucgayan', 'Caibiran', 'Culaba', 'Kawayan', 'Maripipi', 'Naval'];
 
 export const DEPARTMENTS = [
@@ -619,8 +669,30 @@ function incrementVersions<T extends { _version?: number }>(records: T[]): T[] {
   return records.map((r) => ({ ...r, _version: (r._version || 0) + 1 }));
 }
 
+/**
+ * The role of the session that is currently signed in, as recorded by
+ * `setSessionUser`. Advisory only — it decides which *local* caches are worth
+ * touching, never what the signed-in user is allowed to see. Every scope
+ * decision is made by the server on each request.
+ */
+function sessionRole(): string | null {
+  if (typeof window === 'undefined') return null;
+  return safeJsonParse<NstpAccount | null>(readSensitive('session-user'), null)?.role ?? null;
+}
+
+/**
+ * Lazily initialises the shared snapshot keys to empty collections.
+ *
+ * Coordinators are excluded. Their screens read exclusively from
+ * `/nstp/coordinators/**` endpoints, so seeding on their behalf would write into
+ * the shared admin snapshot keys for a session that never reads them — the exact
+ * coupling the coordinator/admin separation removed. Skipping is also invisible
+ * to any reader: an absent key and a key holding `'[]'` both parse to `[]` via
+ * `safeJsonParse(readSensitive(key), [])`.
+ */
 export function ensureNstpSeedData() {
   if (typeof window === 'undefined') return;
+  if (sessionRole() === 'coordinator') return;
 
   if (!readSensitive(ACCOUNTS_KEY)) {
     writeSensitive(ACCOUNTS_KEY, JSON.stringify([]));
@@ -785,7 +857,11 @@ const hasStudentPortalAccess = (result: QualifyingExamResult) => {
 export function syncStudentAccessFromQualifyingResult(result: QualifyingExamResult) {
   if (typeof window === 'undefined' || !hasStudentPortalAccess(result)) return;
 
-  const component = result.assignedComponent as NstpComponent;
+  // The exam result is read from a browser-writable store, so the assigned
+  // component is validated instead of cast. An unrecognised label must not be
+  // able to create an *active* roster record under a component nobody assigned.
+  const component = toNstpComponent(result.assignedComponent);
+  if (!component) return;
   const accounts = loadAccounts();
   const nextAccounts = accounts.map((account) => (
     account.id === result.userId
@@ -962,8 +1038,13 @@ export function createEmptyStudent(): NstpStudent {
     cityAddress: '',
     provincialAddress: '',
     contactNumber: '',
-    component: 'CWTS',
-    municipality: 'Naval',
+    // A brand-new record has no component until somebody chooses one. Seeding
+    // 'CWTS' here meant an administrator who never touched the field created a
+    // CWTS student by accident.
+    component: null,
+    // No municipality until an administrator picks one. Seeding 'Naval' placed
+    // every new record inside the Naval facilitator's roster scope.
+    municipality: '',
     progress: 0,
     assessments: 0,
     status: 'pending',
@@ -992,7 +1073,7 @@ export function createEmptyModule(): NstpModule {
   };
 }
 
-export function createEmptyAssessment(owner: NstpAccount, overrides: Partial<NstpAssessment> = {}): NstpAssessment {
+export function createEmptyAssessment(owner: AssessmentOwner, overrides: Partial<NstpAssessment> = {}): NstpAssessment {
   const questions = overrides.questions || [
     { id: `q-${Math.random().toString(36).slice(2, 9)}`, prompt: 'New question prompt', options: ['Option A', 'Option B', 'Option C', 'Option D'], correctIndex: 0 },
   ];

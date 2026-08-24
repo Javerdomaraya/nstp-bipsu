@@ -17,7 +17,9 @@ services:
       - app-internal
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     restart: unless-stopped
     depends_on:
       postgres:
@@ -49,21 +51,37 @@ services:
       - app-internal
 
   # Run manually before an application deployment; it is never part of build/start.
+  # Invoke it alone and by name -- never by bringing up a whole profile:
+  #     docker compose --profile maintenance run --rm migrate
+  # The command below is the gated path: it runs the orphan report and the
+  # read-only production preflight first, and both fail closed.
   migrate:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     profiles: ["maintenance"]
     depends_on:
       postgres:
         condition: service_healthy
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER:?POSTGRES_USER is required}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:?POSTGRES_DB is required}
-    command: ["npx", "prisma", "migrate", "deploy"]
+    command: ["npm", "run", "migrate:deploy"]
     networks:
       - app-internal
 
+  # DO NOT RUN THIS AGAINST PRODUCTION.
+  #
+  # Seeding writes reference data and provisions an administrator account from
+  # ADMIN_EMAIL / ADMIN_PASSWORD. It is for local and scratch databases only.
+  #
+  # This service is deliberately in its own "seed" profile rather than sharing
+  # "maintenance" with migrate, so that bringing up the maintenance profile
+  # cannot also seed. Migration and seeding must never be coupled.
   seed:
-    build: ./backend
-    profiles: ["maintenance"]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    profiles: ["seed"]
     depends_on:
       postgres:
         condition: service_healthy

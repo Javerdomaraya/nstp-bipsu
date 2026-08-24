@@ -1,8 +1,23 @@
 import { useEffect, useState } from 'react';
 import { Clock, Award, AlertCircle } from 'lucide-react';
 import RoleShell from '../../components/layout/RoleShell';
+import { toNstpComponent } from '../../data/nstpData';
+import type { NstpComponent } from '../../data/nstpData';
+import type { StudentUser } from '../../services/authUser';
 
-export default function PendingAssignment({ user, onAssign, onLogout }: { user: any; onAssign: (component: string) => void; onLogout: () => void }) {
+type Props = {
+  user: StudentUser;
+  /**
+   * Called only with one of the five canonical components. The polled value comes
+   * from the browser-writable `qualifyingExamResults` store, so it is validated
+   * before it is handed on: an unrecognised label must leave the student waiting,
+   * not grant access to a component that does not exist.
+   */
+  onAssign: (component: NstpComponent) => void;
+  onLogout: () => void;
+};
+
+export default function PendingAssignment({ user, onAssign, onLogout }: Props) {
   const [examResult, setExamResult] = useState<any>(null);
 
   useEffect(() => {
@@ -15,9 +30,10 @@ export default function PendingAssignment({ user, onAssign, onLogout }: { user: 
     const checkAssignment = setInterval(() => {
       const allResults = JSON.parse(localStorage.getItem('qualifyingExamResults') || '[]');
       const userResult = allResults.find((r: any) => r.userId === user.id);
+      const assignedComponent = toNstpComponent(userResult?.assignedComponent);
 
-      if (userResult && userResult.assignedComponent) {
-        onAssign(userResult.assignedComponent);
+      if (assignedComponent) {
+        onAssign(assignedComponent);
       }
     }, 2000);
 

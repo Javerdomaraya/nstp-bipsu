@@ -90,6 +90,23 @@ test('coordinator creation rejects client-generated ids and unsupported scopes',
   assert.equal(createCoordinatorSchema.safeParse({ body: { ...common, scope: 'MTS_ARMY' }, params: {}, query: {} }).success, false);
 });
 
+test('coordinator creation requires an explicit supported scope', () => {
+  const common = { name: 'Coordinator', email: 'coord@example.test', employeeNumber: 'COORD-1', password: 'SecurePass123!' };
+  assert.equal(createCoordinatorSchema.safeParse({ body: common, params: {}, query: {} }).success, false);
+  for (const scope of ['CWTS', 'LTS', 'MTS']) {
+    assert.equal(createCoordinatorSchema.safeParse({ body: { ...common, scope }, params: {}, query: {} }).success, true);
+  }
+});
+
+test('schema and forward migration prohibit a database-generated CWTS scope', async () => {
+  const schema = await readFile(new URL('../prisma/schema.prisma', import.meta.url), 'utf8');
+  const migration = await readFile(new URL('../prisma/migrations/20260824120000_require_explicit_coordinator_scope/migration.sql', import.meta.url), 'utf8');
+  assert.match(schema, /scope\s+CoordinatorScope\s*\r?\n/);
+  assert.doesNotMatch(schema, /scope\s+CoordinatorScope\s+@default\(CWTS\)/);
+  expectText(migration, 'ALTER COLUMN "scope" DROP DEFAULT');
+  expectText(migration, 'RAISE EXCEPTION');
+});
+
 test('migration backfills broad coordinator scopes and facilitator component ownership fields', async () => {
   const migration = await readFile(new URL('../prisma/migrations/20260803233000_coordinator_scopes_and_facilitator_ownership/migration.sql', import.meta.url), 'utf8');
   expectText(migration, '"CoordinatorScope"');
@@ -98,12 +115,13 @@ test('migration backfills broad coordinator scopes and facilitator component own
   expectText(migration, '"municipalities" TEXT[]');
 });
 
-test('pre-migration orphan reporting skips relationship columns not yet deployed', async () => {
-  const report = await readFile(new URL('../scripts/report-orphans.mjs', import.meta.url), 'utf8');
-  expectText(report, 'information_schema.columns');
-  expectText(report, 'availableColumns.has(`${child}.${column}`)');
-  expectText(report, 'skippedChecks.push');
-});
+// Gate behaviour -- that an undeployed relationship column is SKIPPED rather than
+// queried, and that the legacy facilitator metadata checks block a deployment --
+// is asserted behaviourally in test/release-gate.test.js against the real check
+// definitions. It was previously asserted here by grepping the two entry-point
+// scripts for source strings; those strings moved into scripts/lib/ when the
+// checks were extracted, and the assertions silently became claims about file
+// layout rather than about behaviour.
 
 function expectText(source, text) {
   assert.equal(source.includes(text), true, `Expected migration to contain ${text}`);

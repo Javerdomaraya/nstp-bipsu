@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import type { FacilitatorUser } from '../../../services/authUser';
 import {
   BarChart3,
   Bell,
@@ -55,7 +56,7 @@ export default function FacilitatorDashboard({
   onNavigate,
   embedded = false,
 }: {
-  user: any;
+  user: FacilitatorUser;
   onLogout?: () => void;
   onNavigate?: (target: string) => void;
   embedded?: boolean;

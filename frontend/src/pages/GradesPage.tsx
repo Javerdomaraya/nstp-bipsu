@@ -3,6 +3,7 @@ import { Award, BookOpen, CheckCircle, Clock, FileText, LockKeyhole, TrendingUp 
 import type { NstpAssessment, NstpModule } from '../data/nstpData';
 import { fetchManagedModules } from '../services/modules';
 import { fetchStudentAssessments } from '../services/assessments';
+import type { StudentUser } from '../services/authUser';
 import { apiGet } from '../services/apiClient';
 import { getCurrentAcademicYear } from '../utils/academicYear';
 
@@ -13,7 +14,7 @@ type OfficialGrade = {
 };
 type Attempt = { quizId: string | null; score: number | null };
 
-export default function GradesPage({ user }: { user: any }) {
+export default function GradesPage({ user }: { user: StudentUser }) {
   const [modules, setModules] = useState<NstpModule[]>([]);
   const [assessments, setAssessments] = useState<NstpAssessment[]>([]);
   const [gradeRecords, setGradeRecords] = useState<OfficialGrade[]>([]);

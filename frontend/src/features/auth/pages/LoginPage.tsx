@@ -37,6 +37,7 @@ import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis
 import { BIPSU_PROGRAMS, INDUSTRIAL_TECHNOLOGY_MAJORS, INDUSTRIAL_TECHNOLOGY_PROGRAM, SECONDARY_EDUCATION_MAJORS, SECONDARY_EDUCATION_PROGRAM, YEAR_LEVEL_OPTIONS } from '../../../data/nstpData';
 import splashImage from '../../../assets/images/splash.png';
 import { apiPost } from '../../../services/apiClient';
+import { normalizeAuthenticatedUser, type AuthenticatedUser } from '../../../services/authUser';
 import { fetchProvinces, fetchMunicipalities, type Province, type Municipality } from '../../../services/api';
 import BarangaySearch from '../components/BarangaySearch';
 
@@ -219,7 +220,7 @@ const buildCurrentAddress = (houseStreetPurok: string, barangay: string, municip
     .join(', ');
 };
 
-export default function LoginPage({ onLogin }: { onLogin: (user: any) => void }) {
+export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUser) => void }) {
   const [publicView, setPublicView] = useState<PublicView>('home');
   const [mode, setMode] = useState<LoginMode>('login');
   const [showAuth, setShowAuth] = useState(false);
@@ -469,16 +470,27 @@ export default function LoginPage({ onLogin }: { onLogin: (user: any) => void })
     }
     if (apiResult?.success && apiResult?.data) {
       const userData = apiResult.data.user;
+      const authenticatedUser = normalizeAuthenticatedUser(userData);
+      if (!authenticatedUser) {
+        setError('This account does not have a supported portal role. Ask an administrator to review the account.');
+        return;
+      }
 
-      // Verify the backend returned user role matches the selected login role
-      const backendRole = (userData.role || '').toLowerCase();
+      // Compare the canonical workspace role, not the raw database enum.
+      // Facilitators are stored as INSTRUCTOR on the backend, and comparing that
+      // raw value with the UI's `facilitator` option rejected valid accounts
+      // before the role alias normaliser could run.
+      const backendRole = authenticatedUser.role;
       if (backendRole && backendRole !== loginRole) {
         setError(`This account is registered as "${backendRole}", not "${loginRole}". Please select the correct role.`);
         return;
       }
 
       setPassword('');
-      onLogin({ id: userData.id, name: userData.name, email: userData.email, role: userData.role });
+      // Hand the whole payload to the canonical normaliser. Picking fields by
+      // hand here used to silently drop `coordinatorScope`, which left every
+      // coordinator falling back to CWTS in the dashboard.
+      onLogin(authenticatedUser);
       return;
     }
 

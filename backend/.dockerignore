@@ -1,3 +1,11 @@
+# NOTE: this file is no longer the effective ignore list for the backend image.
+# backend/Dockerfile now builds from the repository root (see the header comment
+# in that file), so the ROOT /.dockerignore applies instead. This file is kept
+# only for anyone running an ad-hoc `docker build ./backend`.
+#
+# prisma/migrations/migration_lock.toml is deliberately NOT excluded. Prisma uses
+# it to detect a provider mismatch between the migrations and the target
+# database; excluding it removes that safety check.
 node_modules
 .git
 .gitignore
@@ -7,4 +15,3 @@ node_modules
 .env.*.local
 dist
 prisma/*.db
-prisma/migrations/migration_lock.toml

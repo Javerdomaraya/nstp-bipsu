@@ -1,5 +1,6 @@
 import { ReactNode, useEffect, useState } from 'react';
 import { CalendarDays, GraduationCap, LogOut, MoonStar, SunMedium } from 'lucide-react';
+import type { AuthenticatedUser } from '../../services/authUser';
 
 export type ShellSidebarItem = {
   label: string;
@@ -8,7 +9,8 @@ export type ShellSidebarItem = {
 };
 
 type Props = {
-  user: any;
+  /** Only the identity strip is rendered here: portal name, display name, email. */
+  user: AuthenticatedUser;
   onLogout: () => void;
   eyebrow: string;
   title: string;

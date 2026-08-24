@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { Calendar, Clock, Users, Video, CheckCircle, Play, Lock, Award, Sparkles, Flame, ShieldCheck, ArrowRight, LayoutDashboard, BookOpen, ExternalLink } from 'lucide-react';
 import RoleShell from '../../components/layout/RoleShell';
 import { loadModules, loadAssessments, type NstpModule, type NstpAssessment } from '../../data/nstpData';
+import type { StudentUser } from '../../services/authUser';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../../utils/moduleUrls';
 
 const shuffleArray = <T,>(array: T[]): T[] => {
@@ -27,7 +28,7 @@ type AssessmentQuestion = {
   correct: number;
 };
 
-export default function GeneralEducation({ user, onComplete, onLogout }: { user: any; onComplete: () => void; onLogout?: () => void; }) {
+export default function GeneralEducation({ user, onComplete, onLogout }: { user: StudentUser; onComplete: () => void; onLogout?: () => void; }) {
   const [modules, setModules] = useState<NstpModule[]>([]);
   const [assessments, setAssessments] = useState<NstpAssessment[]>([]);
   const [progress, setProgress] = useState<Record<string, SeminarProgress>>({});

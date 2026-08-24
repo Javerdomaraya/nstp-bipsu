@@ -29,13 +29,23 @@ function cellXml(value: unknown, rowIndex: number, columnIndex: number): string 
   return `<c r="${address}" t="inlineStr"><is><t xml:space="preserve">${escapeXml(text)}</t></is></c>`;
 }
 
+function columnWidthsXml(rows: Array<Array<unknown>>): string {
+  const columnCount = rows.reduce((maximum, row) => Math.max(maximum, row.length), 0);
+  if (columnCount === 0) return '';
+  const widths = Array.from({ length: columnCount }, (_, columnIndex) => {
+    const longestValue = rows.reduce((maximum, row) => Math.max(maximum, String(row[columnIndex] ?? '').length), 0);
+    return Math.min(60, Math.max(10, longestValue + 2));
+  });
+  return `<cols>${widths.map((width, index) => `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`).join('')}</cols>`;
+}
+
 function sheetXml(rows: Array<Array<unknown>>): string {
   if (rows.length > MAX_IMPORT_ROWS) throw new Error(`Exports may contain at most ${MAX_IMPORT_ROWS} rows per sheet.`);
   const body = rows.map((row, rowIndex) => {
     if (row.length > MAX_IMPORT_COLUMNS) throw new Error(`Exports may contain at most ${MAX_IMPORT_COLUMNS} columns per sheet.`);
     return `<row r="${rowIndex + 1}">${row.map((value, columnIndex) => cellXml(value, rowIndex, columnIndex)).join('')}</row>`;
   }).join('');
-  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${body}</sheetData></worksheet>`;
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${columnWidthsXml(rows)}<sheetData>${body}</sheetData></worksheet>`;
 }
 
 function safeSheetName(name: string, index: number): string {

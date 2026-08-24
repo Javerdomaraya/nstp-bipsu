@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import prisma from './db/prisma.js';
 import { env } from './config/env.js';
 import { getAllowedOrigins } from './config/cors.js';
+import { COORDINATOR_SCOPE_TYPES } from './modules/staff/staff.service.js';
 
 let io = null;
 
@@ -41,11 +42,15 @@ export async function resolveAuthorizedRooms(user) {
   }
   if (user.role === 'COORDINATOR') {
     const coordinator = await prisma.coordinatorProfile.findUnique({ where: { userId: user.id }, select: { componentId: true, scope: true } });
-    if (coordinator?.scope) {
-      const types = coordinator.scope === 'MTS' ? ['MTS_ARMY', 'MTS_NAVY'] : coordinator.scope === 'LTS' ? ['LTS'] : ['CWTS', 'CWTS_COAST_GUARD'];
+    // Same imported scope map as the HTTP authorization middleware. This used to
+    // repeat the mapping inline with a final `: ['CWTS', 'CWTS_COAST_GUARD']`
+    // branch, which subscribed a coordinator with an unrecognised scope to the
+    // CWTS component rooms. An unknown scope now joins no component room at all.
+    const types = COORDINATOR_SCOPE_TYPES[coordinator?.scope];
+    if (types) {
       const components = await prisma.nSTPComponent.findMany({ where: { type: { in: types } }, select: { id: true } });
       components.forEach((component) => rooms.push(`component:${component.id}`));
-    } else if (coordinator?.componentId) rooms.push(`component:${coordinator.componentId}`);
+    }
   }
 
   return rooms;

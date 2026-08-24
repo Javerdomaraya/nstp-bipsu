@@ -22,6 +22,7 @@ import {
   getAdminSummaryController, getMyAttendance, getMyProgress,
   getMyQualifyingResults, getMyStudentProfile, listCoordinatorClasses,
   listCoordinatorStudents, listInstructorClasses, listInstructorClassStudents,
+  listCoordinatorTrainingGroupsController,
   completeMyModule, submitMyAssessment,
   listAdminModules, createAdminModule, updateAdminModule, removeAdminModule,
   listCoordinatorModules, createCoordinatorModule, updateCoordinatorModule, removeCoordinatorModule,
@@ -87,6 +88,7 @@ router.get('/instructors/classes/:classId/students', authenticate, requireRole('
 
 router.get('/coordinators/component/students', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorStudents));
 router.get('/coordinators/component/classes', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorClasses));
+router.get('/coordinators/component/training-groups', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorTrainingGroupsController));
 router.get('/coordinators/modules', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorModules));
 router.get('/coordinators/assessments', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorAssessments));
 router.post('/coordinators/assessments', authenticate, requireRole('COORDINATOR'), strictWriteLimiter, asyncHandler(getCurrentCoordinator), validateRequest(createAssessmentSchema), asyncHandler(createCoordinatorAssessment));

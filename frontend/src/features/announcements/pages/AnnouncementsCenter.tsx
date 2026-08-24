@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bell, Megaphone, Search, CheckCircle2, CircleAlert, Send } from 'lucide-react';
 import { safeJsonParse } from '../../../data/nstpData';
+import type { AuthenticatedUser } from '../../../services/authUser';
 
 type NoticeAudience = 'all' | 'student' | 'admin' | 'facilitator';
 type NoticePriority = 'normal' | 'high';
@@ -17,7 +18,7 @@ type Notice = {
 
 const NOTICE_KEY = 'nstp-system-notices';
 
-export default function AnnouncementsCenter({ user }: { user: any }) {
+export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser }) {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [query, setQuery] = useState('');
   const [audienceFilter, setAudienceFilter] = useState<'all' | NoticeAudience>('all');

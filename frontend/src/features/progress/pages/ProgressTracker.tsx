@@ -4,6 +4,7 @@ import { NstpAssessment, NstpModule, replaceAssessmentsSnapshot, replaceModulesS
 import { PortalStatCard } from '../../../components/ui/portal';
 import { fetchManagedModules } from '../../../services/modules';
 import { fetchStudentAssessments } from '../../../services/assessments';
+import type { AuthenticatedUser } from '../../../services/authUser';
 import { apiGet } from '../../../services/apiClient';
 
 type AssessmentResult = {
@@ -12,7 +13,7 @@ type AssessmentResult = {
   passed: boolean;
 };
 
-export default function ProgressTracker({ user, onBack }: { user: any; onBack?: () => void }) {
+export default function ProgressTracker({ user, onBack }: { user: AuthenticatedUser; onBack?: () => void }) {
   const [progress, setProgress] = useState<Record<string, boolean>>({});
   const [assessments, setAssessments] = useState<Record<string, AssessmentResult>>({});
   const [modules, setModules] = useState<NstpModule[]>([]);

@@ -8,11 +8,12 @@ import ModulesPage from '../../../pages/ModulesPage';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import StudentProfileModal from '../components/StudentProfileModal';
 import AdminGradesView from '../components/AdminGradesView';
-import { createEmptyStudent, loadAssessments, loadAccounts, loadModules, loadPendingStudentRegistrations, loadStudents, saveAccounts, savePendingStudentRegistrations, saveStudents, safeJsonParse, PendingStudentRegistration, NstpStudent, NstpAccount, NstpComponent, NstpRole, BiliranMunicipality, BILIRAN_MUNICIPALITIES, NSTP_COMPONENTS, loadTrainingGroups, saveTrainingGroups, syncAllFromApi, syncCollectionFromApi, syncToApi, AUDIT_LOG_KEY, type CoordinatorScope } from '../../../data/nstpData';
+import { createEmptyStudent, loadAssessments, loadAccounts, loadModules, loadPendingStudentRegistrations, loadStudents, saveAccounts, savePendingStudentRegistrations, saveStudents, safeJsonParse, PendingStudentRegistration, NstpStudent, NstpAccount, NstpComponent, NstpRole, BiliranMunicipality, BILIRAN_MUNICIPALITIES, NSTP_COMPONENTS, toNstpComponent, loadTrainingGroups, saveTrainingGroups, syncAllFromApi, syncCollectionFromApi, syncToApi, AUDIT_LOG_KEY, type CoordinatorScope } from '../../../data/nstpData';
 import { apiPost, apiPut, apiDel } from '../../../services/apiClient';
 import { toast } from 'sonner';
 import { useCurrentUser, useUpdateCurrentUser } from '../../../hooks/index';
 import { parseStudentCsv, toCsv } from '../../../utils/spreadsheet';
+import { ACCEPTED_COMPONENTS_HINT, validateStudentImportRows } from '../../../utils/studentImport';
 import { createRegistrationApprovalClient, getRegistrationApprovalErrorMessage } from '../services/registrationApproval';
 import {
   activateProfileTemplate, createTemplateBackup, fetchProfileTemplates, parseTemplateBackup,
@@ -133,7 +134,9 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const [spotlightStudentId, setSpotlightStudentId] = useState<string | null>(null);
   const [selectedStudentIds, setSelectedStudentIds] = useState<string[]>([]);
   const [studentDetailId, setStudentDetailId] = useState<string | null>(null);
-  const [bulkComponent, setBulkComponent] = useState<NstpStudent['component']>('CWTS');
+  // Pre-selected value of the bulk-reassign dropdown, not an inferred value: the
+  // administrator sees CWTS selected and must press the action to apply it.
+  const [bulkComponent, setBulkComponent] = useState<NstpComponent>('CWTS');
   const [auditLog, setAuditLog] = useState<AdminAuditEntry[]>([]);
   const [auditSearch, setAuditSearch] = useState('');
   const [filterPresets, setFilterPresets] = useState<StudentFilterPreset[]>([]);
@@ -345,16 +348,34 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     if (!file) return;
     try {
       const importedRows = await parseStudentCsv(file);
-      const componentValues: NstpStudent['component'][] = ['CWTS', 'LTS', 'MTS (Army)', 'MTS (Navy)', 'CWTS (Coast Guard)'];
-      const statusValues: NstpStudent['status'][] = ['active', 'pending', 'graduated'];
-      const importedStudents: NstpStudent[] = importedRows.map((row, index) => ({
+
+      // The component decides which coordinator owns a student, so a blank or
+      // unrecognised value is a validation failure and never a guess: an
+      // inferred component would turn bad import data into legitimate scoped
+      // data for whichever coordinator owns that component. The whole batch is
+      // validated before anything is persisted, so a single bad row cannot
+      // leave a half-imported roster behind — see `validateStudentImportRows`,
+      // which returns no rows at all when any row is invalid.
+      const { errors: rowErrors, rows: validatedRows } = validateStudentImportRows(importedRows);
+
+      if (rowErrors.length > 0) {
+        logAudit('Rejected student CSV import', `${rowErrors.length} invalid value(s); nothing was imported. ${rowErrors.join(' ')}`);
+        const shown = rowErrors.slice(0, 5).join('\n');
+        const remaining = rowErrors.length > 5 ? `\n+${rowErrors.length - 5} more issue(s) recorded in the audit log.` : '';
+        toast.error(`Import cancelled — no records were saved. Fix ${rowErrors.length} invalid value(s) and upload again.`, {
+          description: `${shown}${remaining}\n${ACCEPTED_COMPONENTS_HINT}`,
+        });
+        return;
+      }
+
+      const importedStudents: NstpStudent[] = validatedRows.map(({ row, index, component, status }) => ({
         id: row.id || `student-import-${Date.now()}-${index}`,
         name: row.name,
         email: row.email,
-        component: componentValues.includes(row.component as NstpStudent['component']) ? row.component as NstpStudent['component'] : 'CWTS',
+        component,
         progress: row.progress,
         assessments: row.assessments,
-        status: statusValues.includes(row.status as NstpStudent['status']) ? row.status as NstpStudent['status'] : (row.progress === 100 ? 'graduated' : row.progress >= 70 ? 'active' : 'pending'),
+        status: status ?? (row.progress === 100 ? 'graduated' : row.progress >= 70 ? 'active' : 'pending'),
         notes: row.notes,
         updatedAt: new Date().toISOString(),
       }));
@@ -443,6 +464,14 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
 
   const saveStudent = () => {
     if (!studentForm) return;
+
+    // An active student is visible to the coordinator of their component, so the
+    // component must be chosen explicitly before the record can go active. The
+    // form never fills this in on the administrator's behalf.
+    if (studentForm.status === 'active' && !studentForm.component) {
+      toast.error('Select an NSTP component before setting this student to active.');
+      return;
+    }
 
     const nextStudent = { ...studentForm, progress: Math.max(0, Math.min(100, Number(studentForm.progress) || 0)), assessments: Math.max(0, Number(studentForm.assessments) || 0), updatedAt: new Date().toISOString() };
     const nextStudents = students.some((student) => student.id === nextStudent.id)
@@ -1105,7 +1134,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     const nextStudents = students.map((student) => (student.id === studentId ? { ...student, ...patch, updatedAt: new Date().toISOString() } : student));
     persistStudents(nextStudents);
     const updatedStudent = nextStudents.find((student) => student.id === studentId);
-    if (updatedStudent?.status === 'active' && updatedStudent.component) {
+    const assignedComponent = updatedStudent?.component ?? null;
+    if (updatedStudent?.status === 'active' && assignedComponent) {
       const accounts = loadAccounts();
       const nextAccounts = accounts.map((account) => (
         account.id === updatedStudent.id || account.email.toLowerCase() === updatedStudent.email.toLowerCase()
@@ -1113,8 +1143,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
               ...account,
               generalEducationComplete: true,
               examTaken: account.examTaken ?? true,
-              preferredComponent: account.preferredComponent || updatedStudent.component,
-              component: updatedStudent.component,
+              preferredComponent: account.preferredComponent || assignedComponent,
+              component: assignedComponent,
               componentAccessStatus: 'manual-approved',
               surname: updatedStudent.surname,
               firstName: updatedStudent.firstName,
@@ -1132,11 +1162,17 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
       ));
       saveAccounts(nextAccounts);
 
-      const currentUser = safeJsonParse<any>(localStorage.getItem('nstpUser'), null);
-      const matchedAccount = nextAccounts.find((account) => account.id === currentUser?.id);
-      if (matchedAccount && (matchedAccount.id === updatedStudent.id || matchedAccount.email.toLowerCase() === updatedStudent.email.toLowerCase())) {
-        localStorage.setItem('nstpUser', JSON.stringify(matchedAccount));
-        window.dispatchEvent(new CustomEvent('nstp-current-user-updated', { detail: matchedAccount }));
+      // The live session is never read from, or written to, `localStorage`: an
+      // account row can carry a `password` field and nothing consumes that key
+      // as a session any more. The event carries the updated row instead, and
+      // App re-normalises it, applying it only if the id and role still match
+      // the signed-in user.
+      const updatedAccount = nextAccounts.find((account) => (
+        account.id === updatedStudent.id || account.email.toLowerCase() === updatedStudent.email.toLowerCase()
+      ));
+      if (updatedAccount) {
+        const { password: _password, ...accountWithoutPassword } = updatedAccount;
+        window.dispatchEvent(new CustomEvent('nstp-current-user-updated', { detail: accountWithoutPassword }));
       }
     }
   };
@@ -1272,7 +1308,9 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     updateStudent(spotlightStudent.id, { component });
   };
 
-  const updateForm = (field: keyof NstpStudent, value: string | number) => {
+  // `null` is accepted so an administrator can clear an assignment (component)
+  // instead of the form silently keeping a stale or guessed value.
+  const updateForm = (field: keyof NstpStudent, value: string | number | null) => {
     if (!studentForm) return;
     setStudentForm({ ...studentForm, [field]: value });
   };
@@ -2129,11 +2167,12 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                               <td className="px-3 py-3 text-slate-600 dark:text-slate-300"><span className="block truncate">{student.facilitatorName || 'Unassigned'}</span></td>
                               <td className="px-3 py-3">
                                 <select
-                                  value={student.component}
-                                  onChange={(event) => updateStudent(student.id, { component: event.target.value as NstpStudent['component'] })}
+                                  value={student.component ?? ''}
+                                  onChange={(event) => updateStudent(student.id, { component: toNstpComponent(event.target.value) })}
                                   className="w-full rounded-xl border border-blue-100 bg-blue-50 px-2 py-2 text-xs font-semibold text-blue-700 outline-none hover:border-blue-300 dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-200"
                                   title="Reroute student to another component"
                                 >
+                                  <option value="">Not yet assigned</option>
                                   {NSTP_COMPONENTS.map((component) => <option key={component} value={component}>{component}</option>)}
                                 </select>
                               </td>
@@ -2203,7 +2242,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Email</span><input value={studentForm.email} onChange={(e) => updateForm('email', e.target.value)} placeholder="Enter your email" className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label>
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Student ID</span><input value={studentForm.studentId || ''} onChange={(e) => updateForm('studentId', e.target.value)} placeholder="Enter student ID" className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label>
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Municipality</span><select value={studentForm.municipality || ''} onChange={(e) => updateForm('municipality', e.target.value)} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Unassigned</option>{BILIRAN_MUNICIPALITIES.map((municipality) => <option key={municipality} value={municipality}>{municipality}</option>)}</select></label>
-                            <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Component</span><select value={studentForm.component} onChange={(e) => updateForm('component', e.target.value as NstpStudent['component'])} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">{NSTP_COMPONENTS.map((component) => <option key={component} value={component}>{component}</option>)}</select></label>
+                            <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Component</span><select value={studentForm.component ?? ''} onChange={(e) => updateForm('component', toNstpComponent(e.target.value))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="">Not yet assigned</option>{NSTP_COMPONENTS.map((component) => <option key={component} value={component}>{component}</option>)}</select></label>
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Status</span><select value={studentForm.status} onChange={(e) => updateForm('status', e.target.value as NstpStudent['status'])} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"><option value="active">Active</option><option value="pending">Pending</option><option value="graduated">Graduated</option></select></label>
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Progress</span><input type="number" min="0" max="100" value={studentForm.progress} onChange={(e) => updateForm('progress', Number(e.target.value))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label>
                             <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200"><span>Assessments</span><input type="number" min="0" value={studentForm.assessments} onChange={(e) => updateForm('assessments', Number(e.target.value))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100" /></label>
@@ -3495,7 +3534,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                 <button onClick={() => applyBulkPatch({ status: 'active' })} className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100 dark:hover:bg-emerald-500/20">Set active</button>
                 <button onClick={() => applyBulkPatch({ status: 'pending' })} className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-700 hover:bg-amber-100 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100 dark:hover:bg-amber-500/20">Set pending</button>
                 <button onClick={() => applyBulkPatch({ status: 'graduated', progress: 100 })} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800">Set graduated</button>
-                <select value={bulkComponent} onChange={(e) => setBulkComponent(e.target.value as NstpStudent['component'])} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                <select value={bulkComponent} onChange={(e) => setBulkComponent(toNstpComponent(e.target.value) ?? bulkComponent)} className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
                   <option value="CWTS">CWTS</option>
                   <option value="CWTS (Coast Guard)">CWTS (Coast Guard)</option>
                   <option value="LTS">LTS</option>
@@ -3579,7 +3618,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                   </label>
                   <label className="space-y-2 text-sm font-medium text-slate-700 dark:text-slate-200">
                     <span>Component</span>
-                    <select value={studentForm.component} onChange={(e) => updateForm('component', e.target.value as NstpStudent['component'])} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                    <select value={studentForm.component ?? ''} onChange={(e) => updateForm('component', toNstpComponent(e.target.value))} className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                      <option value="">Not yet assigned</option>
                       <option value="CWTS">CWTS</option>
                       <option value="CWTS (Coast Guard)">CWTS (Coast Guard)</option>
                       <option value="LTS">LTS</option>
@@ -4142,7 +4182,6 @@ function CoordinatorManagementView({ admin, coordinators, onRefresh }: { admin: 
       employeeNumber: `COORD-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
       contactNumber: '',
       title: '',
-      coordinatorScope: 'CWTS',
     } as NstpAccount);
     setEditorOpen(true);
   };
@@ -4311,7 +4350,8 @@ function CoordinatorManagementView({ admin, coordinators, onRefresh }: { admin: 
               </label>
               <label className="block space-y-1.5">
                 <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Coordinator Program</span>
-                <select value={editingCoord.coordinatorScope || 'CWTS'} onChange={(e) => setEditingCoord({ ...editingCoord, coordinatorScope: e.target.value as CoordinatorScope })} className="w-full rounded-xl border border-blue-200 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                <select value={editingCoord.coordinatorScope || ''} onChange={(e) => setEditingCoord({ ...editingCoord, coordinatorScope: e.target.value as CoordinatorScope })} className="w-full rounded-xl border border-blue-200 px-4 py-3 text-sm focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100">
+                  <option value="" disabled>Select a coordinator program</option>
                   <option value="CWTS">CWTS — manages CWTS and CWTS Coast Guard</option>
                   <option value="MTS">MTS — manages MTS Army and MTS Navy</option>
                   <option value="LTS">LTS — manages LTS</option>

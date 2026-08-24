@@ -14,6 +14,7 @@
     "frontend:typecheck": "npm run typecheck --workspace frontend",
     "frontend:lint": "npm run lint --workspace frontend",
     "frontend:test": "npm run test --workspace frontend",
+    "frontend:test:regression": "npm run test:regression --workspace frontend",
     "backend:lint": "npm run lint --workspace backend",
     "backend:test": "npm run test --workspace backend",
     "prisma:migrate": "npm run prisma:migrate --workspace backend",
@@ -24,6 +25,8 @@
     "admin:create": "npm run admin:create --workspace backend",
     "admin:reset-password": "npm run admin:reset-password --workspace backend",
     "report:orphans": "npm run report:orphans --workspace backend",
+    "preflight:production": "npm run preflight:production --workspace backend",
+    "verify:schema": "npm run verify:schema --workspace backend",
     "prisma:studio": "npm run prisma:studio --workspace backend",
     "build": "npm run frontend:build && npm run build --workspace backend"
   }

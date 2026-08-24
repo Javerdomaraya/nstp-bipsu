@@ -1,32 +1,47 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart3, Bell, BookOpen, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Mail, Menu, Moon, Plus, Save, Search, Settings, Trash2, Upload, UserCog, Users, X,
+  BarChart3, Bell, BookOpen, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Loader2, Menu, Plus, Save, Search, Settings, ShieldAlert, Trash2, Upload, UserCog, Users, X,
 } from 'lucide-react';
-import { Bar, BarChart, CartesianGrid, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import {
-  BILIRAN_MUNICIPALITIES, createEmptyModule, loadModules, loadStudents, NstpAccount, NstpModule, NstpStudent, replaceAssessmentsSnapshot, replaceModulesSnapshot, type CoordinatorScope,
+  BILIRAN_MUNICIPALITIES, createEmptyModule, NstpAccount, NstpModule, NstpStudent,
 } from '../../../data/nstpData';
 import { createManagedModule, fetchManagedModules, removeManagedModule, updateManagedModule } from '../../../services/modules';
 import { fetchManagedAssessments } from '../../../services/assessments';
-import { COMPONENT_TYPE_LABELS, SCOPE_COMPONENT_TYPES, createMyFacilitator, fetchMyFacilitators, setMyFacilitatorStatus, updateMyFacilitator, type FacilitatorRecord } from '../../../services/staff';
+import { COMPONENT_TYPE_LABELS, createMyFacilitator, facilitatorRecordToAccount, fetchMyFacilitators, setMyFacilitatorStatus, updateMyFacilitator } from '../../../services/staff';
+import { fetchCoordinatorClasses, fetchCoordinatorStudents, type CoordinatorClass } from '../../../services/coordinator';
+import { useCoordinatorScope } from '../../../hooks/useCoordinatorScope';
+import type { CoordinatorUser } from '../../../services/authUser';
+
+const CoordinatorReports = React.lazy(() => import('../../../pages/ReportsPage'));
 
 const initials = (name: string) => name.split(' ').filter(Boolean).slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'C';
 
 export default function CoordinatorDashboard({
   user, onLogout, onNavigate, embedded = false,
 }: {
-  user: any; onLogout?: () => void; onNavigate?: (target: string) => void; embedded?: boolean;
+  /**
+   * The signed-in coordinator. Typed as the coordinator variant of the session
+   * union, which is what lets `useCoordinatorScope(user)` below be trusted to be
+   * asking about a coordinator at all. Scope itself still comes from the server.
+   */
+  user: CoordinatorUser; onLogout?: () => void; onNavigate?: (target: string) => void; embedded?: boolean;
 }) {
-  type CoordinatorView = 'dashboard' | 'modules' | 'facilitators' | 'reports';
+  type CoordinatorView = 'dashboard' | 'modules' | 'facilitators' | 'students' | 'classes' | 'reports';
 
   const [view, setView] = useState<CoordinatorView>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [modules, setModules] = useState<NstpModule[]>([]);
   const [facilitators, setFacilitators] = useState<NstpAccount[]>([]);
   const [students, setStudents] = useState<NstpStudent[]>([]);
+  const [classes, setClasses] = useState<CoordinatorClass[]>([]);
   const [assessmentCount, setAssessmentCount] = useState(0);
   const [search, setSearch] = useState('');
+
+  const [rosterLoading, setRosterLoading] = useState(true);
+  const [studentError, setStudentError] = useState<string | null>(null);
+  const [classError, setClassError] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingModule, setEditingModule] = useState<NstpModule | null>(null);
@@ -38,45 +53,91 @@ export default function CoordinatorDashboard({
   const [facilitatorError, setFacilitatorError] = useState<string | null>(null);
   const [facilitatorSaving, setFacilitatorSaving] = useState(false);
 
-  const coordinatorScope = (user.coordinatorScope || (String(user.component).startsWith('MTS') ? 'MTS' : user.component === 'LTS' ? 'LTS' : 'CWTS')) as CoordinatorScope;
-  const allowedComponentTypes = SCOPE_COMPONENT_TYPES[coordinatorScope];
-  const allowedComponents = allowedComponentTypes.map((type) => COMPONENT_TYPE_LABELS[type]);
-  const userComponent = coordinatorScope;
+  // Coordinator scope resolution lives in one shared hook so that this
+  // dashboard and the reports screen cannot drift apart on where the scope is
+  // stored or what to do when it is missing.
+  const { state: scopeState, scope: coordinatorScope, allowedComponentTypes, allowedComponents, label: userComponent } = useCoordinatorScope(user);
 
-  const facilitatorToAccount = (facilitator: FacilitatorRecord): NstpAccount => ({
-    id: facilitator.id, name: facilitator.name, email: facilitator.email, password: '', role: 'facilitator',
-    employeeNumber: facilitator.employeeNumber, title: facilitator.title, contactNumber: facilitator.contactNumber,
-    componentId: facilitator.componentId, component: COMPONENT_TYPE_LABELS[facilitator.component],
-    municipalities: facilitator.municipalities, accountStatus: facilitator.status,
-  });
-
-  const refreshData = () => {
-    setModules(loadModules());
-    setStudents(loadStudents());
-  };
-
+  // Everything below is loaded from coordinator-scoped endpoints only, and only
+  // once the scope is known.
+  //
+  // Nothing is read from the client-side snapshot store, and — just as
+  // importantly — nothing is written to it. That store lives under shared keys
+  // (`nstp-module-library`, `nstp-assessment-library`) that the admin screens,
+  // the app shell counters and RoleDashboardHome read as if they held the whole
+  // programme. Publishing this coordinator's component-scoped subset into those
+  // keys meant the next session on the same tab — another coordinator, or an
+  // administrator — could render one component's records as the global picture
+  // until its own fetch resolved. Logout now clears sensitive storage as well
+  // (App.tsx `confirmLogout` -> `cleanupSensitiveStorage`), but that is defence
+  // in depth: the real fix is that coordinator data never leaves this
+  // component's own state.
   useEffect(() => {
-    refreshData();
-    fetchManagedModules('coordinator')
-      .then((records) => { replaceModulesSnapshot(records); setModules(records); setModuleError(null); })
-      .catch((error) => setModuleError(error instanceof Error ? error.message : 'Unable to load modules.'));
+    if (!coordinatorScope) return;
+    let cancelled = false;
+
+    setRosterLoading(true);
+    setStudentError(null);
+    setClassError(null);
+
+    const loadModulesAndRoster = async () => {
+      let moduleRecords: NstpModule[] = [];
+      try {
+        moduleRecords = await fetchManagedModules('coordinator');
+        if (cancelled) return;
+        setModules(moduleRecords);
+        setModuleError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setModuleError(error instanceof Error ? error.message : 'Unable to load modules.');
+      }
+
+      // Progress is measured against the published modules in this scope so the
+      // percentage is derived from real records instead of a placeholder.
+      const publishedTarget = moduleRecords.filter((module) => (module.status || 'DRAFT') === 'PUBLISHED').length;
+
+      try {
+        const roster = await fetchCoordinatorStudents(publishedTarget);
+        if (cancelled) return;
+        setStudents(roster);
+        setStudentError(null);
+      } catch (error) {
+        if (cancelled) return;
+        setStudents([]);
+        setStudentError(error instanceof Error ? error.message : 'Unable to load the component student roster.');
+      } finally {
+        if (!cancelled) setRosterLoading(false);
+      }
+    };
+
+    loadModulesAndRoster();
+
+    fetchCoordinatorClasses()
+      .then((records) => { if (!cancelled) { setClasses(records); setClassError(null); } })
+      .catch((error) => {
+        if (cancelled) return;
+        setClasses([]);
+        setClassError(error instanceof Error ? error.message : 'Unable to load component classes.');
+      });
+
     fetchManagedAssessments('coordinator')
-      .then((records) => { replaceAssessmentsSnapshot(records); setAssessmentCount(records.length); })
-      .catch((error) => setModuleError(error instanceof Error ? error.message : 'Unable to load assessments.'));
+      .then((records) => { if (!cancelled) setAssessmentCount(records.length); })
+      .catch((error) => { if (!cancelled) setModuleError(error instanceof Error ? error.message : 'Unable to load assessments.'); });
+
     fetchMyFacilitators()
-      .then((records) => { setFacilitators(records.map(facilitatorToAccount)); setFacilitatorError(null); })
-      .catch((error) => setFacilitatorError(error instanceof Error ? error.message : 'Unable to load facilitators.'));
-  }, []);
+      .then((records) => { if (!cancelled) { setFacilitators(records.map(facilitatorRecordToAccount)); setFacilitatorError(null); } })
+      .catch((error) => { if (!cancelled) setFacilitatorError(error instanceof Error ? error.message : 'Unable to load facilitators.'); });
 
-  const scopedModules = useMemo(
-    () => modules.filter((m) => allowedComponents.includes(m.component as any)),
-    [modules, allowedComponents.join('|')],
-  );
+    return () => { cancelled = true; };
+  }, [coordinatorScope]);
 
-  const scopedStudents = useMemo(
-    () => students.filter((s) => allowedComponents.includes(s.component as any)),
-    [students, allowedComponents.join('|')],
-  );
+  // The API already restricted these collections to this coordinator's
+  // components, so no second client-side scope filter is applied. Re-filtering
+  // here by display label would only hide legitimate rows whenever the stored
+  // component name and the UI label disagree.
+  const scopedModules = modules;
+  const scopedStudents = students;
+  const scopedClasses = classes;
 
   const scopedFacilitators = useMemo(
     () => facilitators,
@@ -93,6 +154,14 @@ export default function CoordinatorDashboard({
     !query || [f.name, f.email, ...(f.municipalities || [])].some((v) => v?.toLowerCase().includes(query))
   );
 
+  const filteredStudents = scopedStudents.filter((s) =>
+    !query || [s.name, s.email, s.studentId, s.component, s.programSection].some((v) => v?.toLowerCase().includes(query))
+  );
+
+  const filteredClasses = scopedClasses.filter((c) =>
+    !query || [c.code, c.name, c.component, c.facilitatorName].some((v) => v?.toLowerCase().includes(query))
+  );
+
   const componentColors = ['#10b981', '#2563eb', '#f59e0b', '#8b5cf6', '#06b6d4'];
 
   const componentData = allowedComponents.map((c) => ({
@@ -103,6 +172,8 @@ export default function CoordinatorDashboard({
     { id: 'dashboard' as CoordinatorView, label: 'Dashboard', icon: LayoutDashboard },
     { id: 'modules' as CoordinatorView, label: 'Module Library', icon: BookOpen },
     { id: 'facilitators' as CoordinatorView, label: 'Facilitators', icon: Users },
+    { id: 'students' as CoordinatorView, label: 'Students', icon: UserCog },
+    { id: 'classes' as CoordinatorView, label: 'Classes', icon: ClipboardList },
     { id: 'reports' as CoordinatorView, label: 'Reports', icon: BarChart3 },
   ];
 
@@ -130,7 +201,6 @@ export default function CoordinatorDashboard({
       const payload = { ...editingModule, component: editingModule.component || allowedComponents[0], status: editingModule.status || 'DRAFT' };
       const saved = exists ? await updateManagedModule('coordinator', payload) : await createManagedModule('coordinator', payload);
       const updated = exists ? modules.map((module) => module.id === saved.id ? saved : module) : [saved, ...modules];
-      replaceModulesSnapshot(updated);
       setModules(updated);
       setEditorOpen(false);
       setEditingModule(null);
@@ -148,7 +218,6 @@ export default function CoordinatorDashboard({
     try {
       await removeManagedModule('coordinator', id);
       const updated = await fetchManagedModules('coordinator');
-      replaceModulesSnapshot(updated);
       setModules(updated);
       setModuleError(null);
     } catch (error) {
@@ -201,7 +270,7 @@ export default function CoordinatorDashboard({
       if (creating) await createMyFacilitator(payload as typeof payload & { password: string });
       else await updateMyFacilitator(editingFacilitator.id, payload);
       const records = await fetchMyFacilitators();
-      setFacilitators(records.map(facilitatorToAccount));
+      setFacilitators(records.map(facilitatorRecordToAccount));
       setFacilitatorEditorOpen(false); setEditingFacilitator(null); setFacilitatorError(null);
     } catch (error) {
       setFacilitatorError(error instanceof Error ? error.message : 'Unable to save facilitator.');
@@ -213,17 +282,38 @@ export default function CoordinatorDashboard({
     if (!window.confirm(`${nextStatus === 'ACTIVE' ? 'Reactivate' : 'Suspend'} ${facilitator.name}?`)) return;
     try {
       await setMyFacilitatorStatus(facilitator.id, nextStatus);
-      const records = await fetchMyFacilitators(); setFacilitators(records.map(facilitatorToAccount));
+      const records = await fetchMyFacilitators(); setFacilitators(records.map(facilitatorRecordToAccount));
     } catch (error) { setFacilitatorError(error instanceof Error ? error.message : 'Unable to update facilitator status.'); }
+  };
+
+  const renderDataNotice = () => {
+    if (rosterLoading) {
+      return (
+        <div role="status" className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+          Loading {userComponent} component records…
+        </div>
+      );
+    }
+    if (studentError || classError) {
+      return (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+          {studentError || classError}
+        </div>
+      );
+    }
+    return null;
   };
 
   const renderDashboard = () => (
     <div className="space-y-5">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {renderDataNotice()}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {[
           { label: 'Modules', value: scopedModules.length, detail: `For ${userComponent}`, icon: BookOpen, tone: 'bg-blue-50 text-blue-700' },
-          { label: 'Facilitators', value: scopedFacilitators.length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700' },
+          { label: 'Facilitators', value: scopedFacilitators.filter((facilitator) => facilitator.accountStatus !== 'SUSPENDED').length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700' },
           { label: 'Students', value: scopedStudents.length, detail: `Enrolled in ${userComponent}`, icon: UserCog, tone: 'bg-violet-50 text-violet-700' },
+          { label: 'Classes', value: scopedClasses.length, detail: `Sections in ${userComponent}`, icon: ClipboardList, tone: 'bg-sky-50 text-sky-700' },
           { label: 'Assessments', value: assessmentCount, detail: 'In the library', icon: ClipboardList, tone: 'bg-amber-50 text-amber-700' },
         ].map((stat) => {
           const Icon = stat.icon;
@@ -254,20 +344,38 @@ export default function CoordinatorDashboard({
               <Users className="mb-1 h-5 w-5" />
               Manage Facilitators
             </button>
+            <button onClick={() => setView('students')} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-left text-sm font-semibold text-violet-800 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
+              <UserCog className="mb-1 h-5 w-5" />
+              View Students
+            </button>
+            <button onClick={() => setView('classes')} className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-left text-sm font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+              <ClipboardList className="mb-1 h-5 w-5" />
+              View Classes
+            </button>
           </div>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Student Distribution</p>
           <div className="mt-4 h-48">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={componentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2}>
-                  {componentData.map((_, i) => <Cell key={i} fill={componentColors[i % componentColors.length]} />)}
-                </Pie>
-                <Tooltip />
-              </PieChart>
-            </ResponsiveContainer>
+            {scopedStudents.length === 0 ? (
+              <div className="grid h-full place-items-center text-center text-sm text-slate-500 dark:text-slate-400">
+                {rosterLoading
+                  ? 'Loading component roster…'
+                  : studentError
+                    ? 'Distribution unavailable until the roster loads.'
+                    : `No students are enrolled in ${userComponent} yet.`}
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <PieChart>
+                  <Pie data={componentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2}>
+                    {componentData.map((_, i) => <Cell key={i} fill={componentColors[i % componentColors.length]} />)}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
       </div>
@@ -341,6 +449,10 @@ export default function CoordinatorDashboard({
         </button>
       </div>
 
+      {facilitatorError && !facilitatorEditorOpen && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">{facilitatorError}</div>
+      )}
+
       <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[700px] text-sm">
@@ -390,53 +502,122 @@ export default function CoordinatorDashboard({
     </div>
   );
 
-  const renderReportsView = () => {
-    const gradeValues = scopedStudents.map((s) => {
-      const progress = s.progress || 0;
-      return progress;
-    }).filter((g) => g > 0);
-    const avgProgress = gradeValues.length ? Math.round(gradeValues.reduce((a, b) => a + b, 0) / gradeValues.length) : 0;
+  const renderStudentsView = () => (
+    <div className="space-y-5">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Component Roster</p>
+        <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Students</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400">Served by the coordinator roster endpoint, already restricted to your component by the server.</p>
+      </div>
 
-    return (
-      <div className="space-y-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Reports</p>
-          <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Analytics</h2>
-        </div>
-        <div className="grid gap-4 sm:grid-cols-3">
-          {[
-            { label: 'Total Students', value: scopedStudents.length, color: 'text-blue-700' },
-            { label: 'Active', value: scopedStudents.filter((s) => s.status === 'active').length, color: 'text-emerald-700' },
-            { label: 'Avg Progress', value: `${avgProgress}%`, color: 'text-amber-700' },
-          ].map((stat) => (
-            <div key={stat.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-              <p className="text-sm text-slate-500 dark:text-slate-400">{stat.label}</p>
-              <p className={`mt-2 text-3xl font-bold ${stat.color} dark:text-${stat.color.replace('text-', '')}`}>{stat.value}</p>
-            </div>
-          ))}
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-          <p className="mb-4 text-sm font-semibold text-slate-800 dark:text-slate-100">Module Hours</p>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={scopedModules.slice(0, 10)}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                <XAxis dataKey="title" tick={{ fontSize: 11 }} angle={-20} textAnchor="end" height={60} />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="hours" fill="#2563eb" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      {renderDataNotice()}
+
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[820px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+              <tr>
+                <th className="px-4 py-3">Student</th>
+                <th className="px-4 py-3">Student No.</th>
+                <th className="px-4 py-3">Email</th>
+                <th className="px-4 py-3">Component</th>
+                <th className="px-4 py-3">Section</th>
+                <th className="px-4 py-3">Year</th>
+                <th className="px-4 py-3">Progress</th>
+                <th className="px-4 py-3">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredStudents.map((student) => (
+                <tr key={student.id} className="border-t border-slate-100 hover:bg-blue-50/60 dark:border-slate-800 dark:hover:bg-slate-900">
+                  <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{student.name || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{student.studentId || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{student.email || '—'}</td>
+                  <td className="px-4 py-3"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">{student.component || 'Unassigned'}</span></td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{student.programSection || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{student.yearLevel || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{student.progress}%</td>
+                  <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold capitalize text-slate-700 dark:bg-slate-800 dark:text-slate-200">{student.status}</span></td>
+                </tr>
+              ))}
+              {filteredStudents.length === 0 && (
+                <tr><td colSpan={8} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                  {rosterLoading ? 'Loading students…' : studentError ? 'The roster could not be loaded.' : query ? 'No students match your search.' : `No students are enrolled in ${userComponent} yet.`}
+                </td></tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
-    );
-  };
+    </div>
+  );
+
+  const renderClassesView = () => (
+    <div className="space-y-5">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Class Sections</p>
+        <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Classes</h2>
+        <p className="text-sm text-slate-500 dark:text-slate-400">{scopedClasses.length} section{scopedClasses.length === 1 ? '' : 's'} with {scopedClasses.reduce((sum, item) => sum + item.studentCount, 0)} enrolled student{scopedClasses.reduce((sum, item) => sum + item.studentCount, 0) === 1 ? '' : 's'}.</p>
+      </div>
+
+      {classError && (
+        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">{classError}</div>
+      )}
+
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+              <tr>
+                <th className="px-4 py-3">Code</th>
+                <th className="px-4 py-3">Class</th>
+                <th className="px-4 py-3">Component</th>
+                <th className="px-4 py-3">Facilitator</th>
+                <th className="px-4 py-3">School Year</th>
+                <th className="px-4 py-3">Semester</th>
+                <th className="px-4 py-3">Students</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredClasses.map((item) => (
+                <tr key={item.id} className="border-t border-slate-100 hover:bg-blue-50/60 dark:border-slate-800 dark:hover:bg-slate-900">
+                  <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{item.code}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.name}</td>
+                  <td className="px-4 py-3"><span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">{item.component || 'Unassigned'}</span></td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.facilitatorName}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.schoolYear}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.semester}</td>
+                  <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{item.studentCount}</td>
+                </tr>
+              ))}
+              {filteredClasses.length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">
+                  {classError ? 'Classes could not be loaded.' : query ? 'No classes match your search.' : `No classes have been created for ${userComponent} yet.`}
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+
+  // Use the full coordinator report surface here. App returns coordinators into
+  // this standalone dashboard before its generic shell router, so keeping a
+  // second summary-only implementation made ReportsPage—and therefore scoped
+  // grades and training groups—unreachable in real navigation.
+  const renderReportsView = () => (
+    <React.Suspense fallback={<div role="status" className="p-8 text-center text-sm text-slate-500">Loading reports…</div>}>
+      <CoordinatorReports user={user} />
+    </React.Suspense>
+  );
 
   const renderContent = () => {
     switch (view) {
       case 'modules': return renderModulesView();
       case 'facilitators': return renderFacilitatorsView();
+      case 'students': return renderStudentsView();
+      case 'classes': return renderClassesView();
       case 'reports': return renderReportsView();
       default: return renderDashboard();
     }
@@ -448,7 +629,38 @@ export default function CoordinatorDashboard({
       ? 'Module Library'
       : view === 'facilitators'
         ? 'Facilitator Management'
-        : 'Reports';
+        : view === 'students'
+          ? 'Component Students'
+          : view === 'classes'
+            ? 'Component Classes'
+            : 'Reports';
+
+  // No component-specific screen or action is reachable until the API has
+  // confirmed which program this coordinator owns.
+  if (scopeState.status !== 'ready') {
+    return (
+      <div className={`${embedded ? 'min-h-0 bg-transparent' : 'min-h-dvh bg-[#f4f8fd]'} grid place-items-center p-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100`}>
+        <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          {scopeState.status === 'resolving' ? (
+            <div role="status" className="space-y-3">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" aria-hidden="true" />
+              <p className="text-base font-semibold text-slate-900 dark:text-white">Confirming your coordinator program…</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Component records stay hidden until the server confirms your assigned NSTP program.</p>
+            </div>
+          ) : (
+            <div role="alert" className="space-y-3">
+              <ShieldAlert className="mx-auto h-8 w-8 text-rose-600" aria-hidden="true" />
+              <p className="text-base font-semibold text-slate-900 dark:text-white">Coordinator program unavailable</p>
+              <p className="text-sm text-slate-600 dark:text-slate-300">{scopeState.message}</p>
+              {onLogout && (
+                <button onClick={onLogout} className="mt-2 rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 dark:border-slate-700 dark:text-slate-200">Sign out</button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`${embedded ? 'min-h-0 bg-transparent' : 'min-h-dvh overflow-x-hidden bg-[#f4f8fd]'} text-slate-900 dark:bg-slate-950 dark:text-slate-100`}>
@@ -492,7 +704,7 @@ export default function CoordinatorDashboard({
                 <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
                   <label className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 sm:min-w-[16rem] xl:w-[24rem]">
                     <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules or facilitators..." aria-label="Search modules or facilitators" className="w-full bg-transparent text-slate-900 outline-none placeholder:text-slate-400 focus:border-transparent focus:shadow-none dark:text-slate-100" />
+                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules, facilitators, students or classes..." aria-label="Search modules, facilitators, students or classes" className="w-full bg-transparent text-slate-900 outline-none placeholder:text-slate-400 focus:border-transparent focus:shadow-none dark:text-slate-100" />
                   </label>
                   {onNavigate && (
                     <button type="button" onClick={() => onNavigate('announcements')} aria-label="View announcements" className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">

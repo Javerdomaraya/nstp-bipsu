@@ -1,10 +1,40 @@
-node_modules
-.git
-.gitignore
-*.md
+# Effective ignore list for images built from the repository root, which is now
+# the build context for backend/Dockerfile.
+#
+# Patterns without a wildcard prefix match only at the context root, so the
+# nested forms below are required. Two of them are load-bearing:
+#
+#   **/node_modules  A local backend/node_modules holds a Prisma client
+#                    generated for the developer's own platform. Copied into the
+#                    image it would sit at /app/backend/node_modules and take
+#                    resolution priority over the correctly generated hoisted
+#                    client at /app/node_modules, producing an engine mismatch
+#                    at runtime.
+#   **/.env*         backend/.env contains DATABASE_URL, JWT_SECRET, and admin
+#                    credentials. It must never be baked into an image layer.
+#
+# prisma/migrations/migration_lock.toml is deliberately NOT excluded: Prisma uses
+# it to detect a provider mismatch between the migrations and the target
+# database.
+
+**/node_modules
+**/.git
+**/.gitignore
+# Both the bare and nested forms are listed on purpose. `**/` is documented to
+# match zero path segments, but a secret is not the place to depend on that.
 .env
-.env.local
-.env.*.local
-dist
-.next
-.cache
+.env.*
+**/.env
+**/.env.*
+!**/.env.example
+
+**/dist
+**/.next
+**/.cache
+**/coverage
+**/*.log
+
+*.md
+docs/
+
+**/prisma/*.db

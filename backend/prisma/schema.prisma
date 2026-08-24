@@ -175,7 +175,7 @@ model CoordinatorProfile {
   userId         String              @unique
   employeeNumber String?             @unique
   componentId    String?
-  scope          CoordinatorScope    @default(CWTS)
+  scope          CoordinatorScope
   user           User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   component      NSTPComponent?      @relation(fields: [componentId], references: [id], onDelete: SetNull)
   facilitators   InstructorProfile[]

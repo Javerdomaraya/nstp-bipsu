@@ -8,8 +8,9 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest"
+    "test": "vitest run src",
+    "test:watch": "vitest",
+    "test:regression": "node --import ./test/register-ts-loader.mjs --test \"test/*.test.ts\""
   },
   "dependencies": {
     "@radix-ui/react-accordion": "1.2.3",

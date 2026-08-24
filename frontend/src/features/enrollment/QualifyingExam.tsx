@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FileText, Clock, AlertCircle, Award, LogOut } from 'lucide-react';
 import { autoAssignQualifyingResult, loadQualifyingExamResults, saveQualifyingExamResults, syncStudentAccessFromQualifyingResult, NstpComponent, QualifyingExamResult } from '../../data/nstpData';
+import type { StudentUser } from '../../services/authUser';
 
 const EXAM_QUESTIONS = [
   {
@@ -85,7 +86,7 @@ const EXAM_QUESTIONS = [
   }
 ];
 
-export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout }: { user: any; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void }) {
+export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout }: { user: StudentUser; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void }) {
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [timeLeft, setTimeLeft] = useState(3600); // 60 minutes
   const [submitted, setSubmitted] = useState(false);

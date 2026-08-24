@@ -174,6 +174,19 @@ test('administrators can use explicit administrative routes', async () => {
   assert.deepEqual(await response.json(), []);
 });
 
+test('administrator coordinator creation without scope fails before any profile write', async () => {
+  let transactionStarted = false;
+  prisma.$transaction = async () => { transactionStarted = true; throw new Error('Coordinator write must not run.'); };
+  const response = await request('/api/nstp/admin/coordinators', {
+    role: 'ADMIN', method: 'POST', body: {
+      name: 'Missing Scope Coordinator', email: 'missing-scope@example.test',
+      employeeNumber: 'MISSING-SCOPE-1', password: 'SecurePass123!',
+    },
+  });
+  assert.equal(response.status, 400);
+  assert.equal(transactionStarted, false);
+});
+
 test('pending registration listing excludes decided registrations and credential fields', async () => {
   prisma.pendingRegistration.findMany = async ({ where, select }) => {
     assert.deepEqual(where, { status: 'PENDING' });

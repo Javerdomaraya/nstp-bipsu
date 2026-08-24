@@ -51,14 +51,61 @@ const toUserRole = (role) => {
   return 'STUDENT';
 };
 
-const toComponentType = (component) => {
-  const normalized = String(component || '').toUpperCase().replace(/\s+/g, '_').replace(/[()]/g, '');
-  if (normalized.includes('ARMY')) return 'MTS_ARMY';
-  if (normalized.includes('NAVY')) return 'MTS_NAVY';
-  if (normalized === 'LTS') return 'LTS';
-  if (normalized.includes('CWTS') && normalized.includes('COAST')) return 'CWTS_COAST_GUARD';
-  return 'CWTS';
+/**
+ * The five values the Prisma `NSTPComponentType` enum defines
+ * (prisma/schema.prisma). Nothing outside this set may reach the database.
+ */
+export const NSTP_COMPONENT_TYPES = Object.freeze(['CWTS', 'CWTS_COAST_GUARD', 'LTS', 'MTS_ARMY', 'MTS_NAVY']);
+
+/** Canonical display name for each type, used when a component row must be created. */
+export const NSTP_COMPONENT_NAMES = Object.freeze({
+  CWTS: 'CWTS',
+  CWTS_COAST_GUARD: 'CWTS (Coast Guard)',
+  LTS: 'LTS',
+  MTS_ARMY: 'MTS (Army)',
+  MTS_NAVY: 'MTS (Navy)',
+});
+
+/**
+ * Resolves a component to its canonical enum value, or `null` when the value is
+ * blank or unrecognised.
+ *
+ * Aliases are intentional, not guessed: the key is normalised by upper-casing,
+ * collapsing whitespace to underscores and dropping parentheses, so the five
+ * display names the API already accepts on module writes ('MTS (Army)',
+ * 'CWTS (Coast Guard)', …) and the five enum spellings map onto the same key.
+ * Anything else — blank, 'MTS' with no branch, 'ROTC', a typo — resolves to
+ * `null`.
+ *
+ * This function used to end in an unconditional `return 'CWTS'`. Because CWTS is
+ * also the schema default, that turned any unrecognised component in an admin
+ * import into a genuine CWTS record, which then appeared on the CWTS
+ * coordinator's roster as legitimate data. Callers must now treat `null` as a
+ * validation failure; see `requireComponentType`.
+ */
+export const toComponentType = (component) => {
+  if (typeof component !== 'string') return null;
+  const key = component.trim().toUpperCase().replace(/\s+/g, '_').replace(/[()]/g, '');
+  return NSTP_COMPONENT_TYPES.includes(key) ? key : null;
 };
+
+/**
+ * Same resolution as `toComponentType`, but raises a 400 instead of returning
+ * `null`. Every write path that persists a component uses this so an invalid
+ * value can never be silently filed under a real program.
+ */
+export function requireComponentType(component, field = 'component') {
+  const type = toComponentType(component);
+  if (type) return type;
+  const supplied = typeof component === 'string' ? component.trim() : '';
+  const error = new Error(
+    `"${supplied || '(blank)'}" is not a recognised NSTP component. Use one of: ${Object.values(NSTP_COMPONENT_NAMES).join(', ')}.`,
+  );
+  error.statusCode = 400;
+  error.code = 'INVALID_COMPONENT';
+  error.field = field;
+  throw error;
+}
 
 const withDatabase = async (name, operation) => {
   try {
@@ -92,23 +139,43 @@ function moduleData(payload) {
     .map((field) => [field, payload[field]]));
 }
 
+/**
+ * Resolves the component a module write may be attached to.
+ *
+ * `forcedComponentScope` is the caller's narrowing, and only two values mean
+ * "unrestricted": `null` and `undefined`. Those are reachable exclusively from
+ * the admin controllers, which pass no third argument. Every coordinator path
+ * passes `req.coordinator.allowedComponentIds`, an array the request middleware
+ * re-derives from the database.
+ *
+ * A *present but empty* narrowing therefore means "this actor may reach no
+ * component at all" and must deny — it must never be read as "no restriction".
+ * That is why the checks below test `Array.isArray(...)` alone: an earlier
+ * version also tested `.length`, so an empty array skipped both guards and fell
+ * through to an unscoped write. It was unreachable in practice (a coordinator
+ * with no components is rejected upstream), but it was still a fail-open
+ * spelling of the invariant, and `outsideForcedScope` already gets this right.
+ */
 async function resolveModuleComponent(client, component, forcedComponentScope = null) {
-  if (typeof forcedComponentScope === 'string') return forcedComponentScope;
+  // One shape from here on, so the string and array forms cannot drift apart.
+  const scope = typeof forcedComponentScope === 'string' ? [forcedComponentScope] : forcedComponentScope;
   if (!component || component === 'Common') {
-    if (Array.isArray(forcedComponentScope) && forcedComponentScope.length) {
+    // A common (component-less) module is an administrator's write. A narrowed
+    // actor has to name a component inside its own scope.
+    if (Array.isArray(scope)) {
       const error = new Error('Coordinators must select a component inside their program scope.');
       error.statusCode = 403;
       throw error;
     }
     return null;
   }
-  const record = await client.nSTPComponent.findUnique({ where: { type: toComponentType(component) }, select: { id: true } });
+  const record = await client.nSTPComponent.findUnique({ where: { type: requireComponentType(component) }, select: { id: true } });
   if (!record) {
     const error = new Error('The selected NSTP component is not configured.');
     error.statusCode = 400;
     throw error;
   }
-  if (Array.isArray(forcedComponentScope) && forcedComponentScope.length && !forcedComponentScope.includes(record.id)) {
+  if (outsideForcedScope(record.id, scope)) {
     const error = new Error('The selected module component is outside your coordinator scope.');
     error.statusCode = 403;
     throw error;
@@ -116,8 +183,15 @@ async function resolveModuleComponent(client, component, forcedComponentScope = 
   return record.id;
 }
 
+/**
+ * True when `componentId` lies outside the caller's narrowing.
+ *
+ * Only a nullish scope is unrestricted. An empty array is a real (if empty)
+ * allow-list, so `[].includes(anything)` is false and everything is outside it —
+ * which is the required reading of "no authorized components".
+ */
 function outsideForcedScope(componentId, forcedComponentScope) {
-  if (!forcedComponentScope) return false;
+  if (forcedComponentScope == null) return false;
   return Array.isArray(forcedComponentScope) ? !forcedComponentScope.includes(componentId) : componentId !== forcedComponentScope;
 }
 
@@ -144,16 +218,77 @@ function moduleWriteData(payload, componentId) {
   };
 }
 
-export async function listManagedModules(componentId = null, instructorId = null, instructorComponentIds = [], managedComponentIds = []) {
-  return withDatabase('modules', async () => {
-    const instructorScope = instructorId ? {
+/**
+ * How a caller is allowed to read the managed-module collection.
+ *
+ * The mode is named rather than inferred because an empty component list is a
+ * legitimate *restrictive* state — a coordinator with no components resolved —
+ * while an administrator's unrestricted read carries no list at all. The former
+ * signature expressed both as `[]` and resolved the ambiguity with
+ * `managedComponentIds.length ? { componentId: { in: … } } : {}`, so a caller
+ * that arrived with an empty list fell through to the unfiltered branch and
+ * received every module in the system. Making the mode explicit means the two
+ * states can no longer be confused by a caller, a refactor, or a default value.
+ */
+export const MODULE_ACCESS = Object.freeze({
+  /** Administrator. Every module; no component restriction. */
+  UNRESTRICTED: 'unrestricted',
+  /** Coordinator. Only modules whose componentId is in `componentIds`. */
+  COMPONENTS: 'components',
+  /** Facilitator. Own modules, plus modules of the components they teach in. */
+  INSTRUCTOR: 'instructor',
+});
+
+/**
+ * Translates an access descriptor into a Prisma filter.
+ *
+ * Returns `null` to mean "no rows are reachable" — distinct from `{}`, which
+ * means "no restriction". Callers must treat the two differently; that
+ * distinction is the whole point of this function.
+ */
+function moduleAccessFilter(access) {
+  const mode = access?.mode;
+  if (mode === MODULE_ACCESS.UNRESTRICTED) return {};
+
+  if (mode === MODULE_ACCESS.COMPONENTS) {
+    if (!Array.isArray(access.componentIds)) {
+      throw new Error('MODULE_ACCESS.COMPONENTS requires a componentIds array.');
+    }
+    const componentIds = [...new Set(access.componentIds.filter(Boolean))];
+    // An authorised-component list that resolved to nothing means no access.
+    // It must never widen into an unfiltered read.
+    if (!componentIds.length) return null;
+    return { componentId: { in: componentIds } };
+  }
+
+  if (mode === MODULE_ACCESS.INSTRUCTOR) {
+    if (!access.instructorId) throw new Error('MODULE_ACCESS.INSTRUCTOR requires an instructorId.');
+    const componentIds = [...new Set((access.componentIds || []).filter(Boolean))];
+    // A facilitator with no sections still owns modules they authored, so an
+    // empty component list narrows the OR rather than emptying the result.
+    return {
       OR: [
-        { instructorId },
-        ...(instructorComponentIds.length ? [{ componentId: { in: [...new Set(instructorComponentIds)] } }] : []),
+        { instructorId: access.instructorId },
+        ...(componentIds.length ? [{ componentId: { in: componentIds } }] : []),
       ],
-    } : {};
+    };
+  }
+
+  throw new Error(`listManagedModules requires an explicit access mode; received ${JSON.stringify(mode ?? null)}.`);
+}
+
+/**
+ * Lists modules for a staff member. `access` is required and must be one of the
+ * `MODULE_ACCESS` shapes; there is deliberately no default, because a default
+ * would have to pick between unrestricted and no-access and either choice is
+ * wrong for some caller.
+ */
+export async function listManagedModules(access) {
+  const where = moduleAccessFilter(access);
+  if (where === null) return [];
+  return withDatabase('modules', async () => {
     const modules = await prisma.module.findMany({
-      ...((componentId || instructorId || managedComponentIds.length) ? { where: { ...(componentId ? { componentId } : {}), ...(managedComponentIds.length ? { componentId: { in: managedComponentIds } } : {}), ...instructorScope } } : {}),
+      ...(Object.keys(where).length ? { where } : {}),
       orderBy: [{ order: 'asc' }, { createdAt: 'desc' }],
       include: {
         component: { select: { id: true, name: true, type: true } },
@@ -179,6 +314,45 @@ export async function listPublishedModules(componentIds = []) {
       },
     });
     return modules.map(toModuleDto);
+  });
+}
+
+/**
+ * Training groups belonging to a coordinator's own components.
+ *
+ * `TrainingGroup.component` is a display-name string rather than a `componentId`
+ * foreign key (prisma/schema.prisma), so the scope is applied by resolving the
+ * component ids the server derived for this coordinator into the spellings a row
+ * may legitimately use — the stored component name, its enum type, and the
+ * canonical label — and filtering on that set inside the query.
+ *
+ * Two properties matter here. The allow-list is built from ids the server
+ * derived from the database (never from the request), and the restriction lives
+ * in the `where` clause, so the response cannot contain another program's rows
+ * for a client to filter out afterwards.
+ */
+export async function listCoordinatorTrainingGroups(allowedComponentIds) {
+  if (!Array.isArray(allowedComponentIds)) {
+    throw new Error('listCoordinatorTrainingGroups requires an array of authorised component ids.');
+  }
+  const componentIds = [...new Set(allowedComponentIds.filter(Boolean))];
+  // No components resolved means no access. Never every group.
+  if (!componentIds.length) return [];
+
+  return withDatabase('training-groups', async () => {
+    const components = await prisma.nSTPComponent.findMany({
+      where: { id: { in: componentIds } },
+      select: { name: true, type: true },
+    });
+    const allowedLabels = [...new Set(
+      components.flatMap((component) => [component.name, component.type, NSTP_COMPONENT_NAMES[component.type]])
+        .filter(Boolean),
+    )];
+    if (!allowedLabels.length) return [];
+    return prisma.trainingGroup.findMany({
+      where: { component: { in: allowedLabels } },
+      orderBy: { createdAt: 'desc' },
+    });
   });
 }
 
@@ -313,6 +487,10 @@ function toStudentAssessmentDto(quiz) {
 
 function assessmentModuleWhere(actor) {
   if (actor.role === 'ADMIN') return {};
+  // `in: []` matches nothing, which is the correct reading of "this coordinator
+  // has no components". Do not rewrite this as
+  // `componentIds.length ? { componentId: { in: … } } : {}` — that spelling turns
+  // zero access into unrestricted access.
   if (actor.role === 'COORDINATOR') return { componentId: { in: actor.componentIds || [] } };
   if (actor.role === 'INSTRUCTOR') return {
     OR: [
@@ -586,7 +764,9 @@ export async function listAdminResource(name, filters = {}) {
   }
 
   if (name === 'modules') {
-    return listManagedModules();
+    // Reached only from admin-only route handlers (see the note above this
+    // function), so the unrestricted mode is stated rather than implied.
+    return listManagedModules({ mode: MODULE_ACCESS.UNRESTRICTED });
   }
 
   if (name === 'students') {
@@ -701,26 +881,14 @@ export async function upsertAdminResource(name, lookup, payload) {
         });
       }
 
-      if (userRole === 'COORDINATOR') {
-        let component = profileData.componentId
-          ? await prisma.nSTPComponent.findUnique({ where: { id: profileData.componentId } })
-          : null;
-        if (!component && profileData.component) {
-          component = await prisma.nSTPComponent.findUnique({ where: { type: toComponentType(profileData.component) } });
-        }
-        await prisma.coordinatorProfile.upsert({
-          where: { userId: user.id },
-          update: {
-            employeeNumber: profileData.employeeNumber || `coord-${user.id.slice(0, 8)}`,
-            componentId: component?.id || null,
-          },
-          create: {
-            userId: user.id,
-            employeeNumber: profileData.employeeNumber || `coord-${user.id.slice(0, 8)}`,
-            componentId: component?.id || null,
-          },
-        });
-      }
+      // No coordinator branch here on purpose. Coordinator provisioning is
+      // rejected at the top of this resource (`Coordinator accounts must be
+      // managed through the dedicated coordinator endpoint`), so any code keyed
+      // on `userRole === 'COORDINATOR'` below that guard is unreachable. A dead
+      // branch used to resolve `profileData.component` through the old
+      // CWTS-defaulting `toComponentType`, which is exactly the kind of path
+      // that gets revived by accident; the real flow is
+      // `staff.service.js#createCoordinator`, which validates the scope.
 
       return toAdminAccountDto(await prisma.user.findUnique({ where: { id: user.id }, select: adminAccountSelect }));
     }
@@ -788,6 +956,13 @@ export async function upsertAdminResource(name, lookup, payload) {
     }
 
     if (name === 'students') {
+      // Resolved first, before any row is written. There is no transaction
+      // around this branch, so validating the component after the user upsert
+      // would leave a real account behind whenever the component was rejected —
+      // a partially created student. The old code could not fail here at all: an
+      // unrecognised component became 'CWTS' and the record was filed under a
+      // live program.
+      const componentType = requireComponentType(nextPayload.component);
       const existingUser = nextPayload.email
         ? await prisma.user.findUnique({ where: { email: nextPayload.email }, select: { id: true } })
         : null;
@@ -811,12 +986,12 @@ export async function upsertAdminResource(name, lookup, payload) {
       });
 
       const component = await prisma.nSTPComponent.upsert({
-        where: { type: toComponentType(nextPayload.component) },
+        where: { type: componentType },
         update: {},
-        create: {
-          type: toComponentType(nextPayload.component),
-          name: nextPayload.component || 'CWTS',
-        },
+        // The name comes from the canonical table, never from the payload. The
+        // previous `nextPayload.component || 'CWTS'` let arbitrary import text
+        // become a component's display name.
+        create: { type: componentType, name: NSTP_COMPONENT_NAMES[componentType] },
       });
 
       const studentKnownFields = ['id', 'studentId', 'studentNumber', 'userId', 'componentId', 'component', 'course', 'yearLevel', 'sectionId', 'email', 'password', 'name', 'updatedAt', 'createdAt'];
@@ -924,7 +1099,69 @@ export async function deleteAdminResource(name, id) {
   }
 }
 
+/**
+ * Resources whose rows carry an NSTP component that must resolve to a canonical
+ * type before anything is written. `students` is the sensitive one: a student's
+ * component decides which coordinator sees the record. `training-groups` is
+ * included because its component column is what scopes the coordinator report.
+ */
+const COMPONENT_BEARING_RESOURCES = Object.freeze({
+  students: { required: true },
+  'training-groups': { required: false },
+  accounts: { required: false },
+});
+
+/**
+ * Finds every row whose component cannot be resolved, identified by its 1-based
+ * position in the submitted batch so an operator can locate it in the source
+ * file.
+ *
+ * `required: true` also rejects a missing or blank value; the looser resources
+ * only reject a value that was supplied and is wrong, because their component is
+ * optional metadata rather than the authorisation-relevant assignment.
+ */
+export function findInvalidComponentRows(name, records) {
+  const rule = COMPONENT_BEARING_RESOURCES[name];
+  if (!rule) return [];
+  const invalid = [];
+  records.forEach((payload, index) => {
+    const supplied = payload?.component;
+    const blank = supplied === undefined || supplied === null || String(supplied).trim() === '';
+    if (blank && !rule.required) return;
+    if (!blank && toComponentType(supplied) !== null) return;
+    invalid.push({
+      row: index + 1,
+      value: blank ? '' : String(supplied),
+      id: payload?.id,
+      studentId: payload?.studentId,
+      email: payload?.email,
+    });
+  });
+  return invalid;
+}
+
 export async function batchUpsertAdminResources(name, records) {
+  // The whole batch is validated before the first write. Two reasons: a bad
+  // component must never be guessed into a real program, and an import that
+  // fails halfway leaves the operator with a partially applied spreadsheet and
+  // no clear way to tell which rows landed. Rejecting up front keeps the file
+  // atomic with respect to this class of error.
+  const invalidComponents = findInvalidComponentRows(name, records);
+  if (invalidComponents.length) {
+    const preview = invalidComponents.slice(0, 5)
+      .map((entry) => `row ${entry.row}${entry.value ? ` ("${entry.value}")` : ' (blank)'}`)
+      .join(', ');
+    const error = new Error(
+      `${invalidComponents.length} row(s) have an unrecognised NSTP component: ${preview}`
+      + `${invalidComponents.length > 5 ? ', …' : ''}. `
+      + `Use one of: ${Object.values(NSTP_COMPONENT_NAMES).join(', ')}. No records were imported.`,
+    );
+    error.statusCode = 400;
+    error.code = 'INVALID_COMPONENT';
+    error.rows = invalidComponents;
+    throw error;
+  }
+
   const results = [];
   for (const payload of records) {
     const lookup = payload.id

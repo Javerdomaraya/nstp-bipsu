@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Activity, BookOpen, CheckCircle2, ClipboardCheck, Clock3, FileDown, FileSpreadsheet, Filter, Gauge, Layers, TrendingUp } from 'lucide-react';
+import { Activity, BookOpen, CheckCircle2, ClipboardCheck, Clock3, FileDown, FileSpreadsheet, Filter, Gauge, Layers, Loader2, ShieldAlert, TrendingUp } from 'lucide-react';
 import {
   ResponsiveContainer,
   PieChart,
@@ -15,10 +15,16 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { loadAccounts, loadAssessments, loadModules, loadStudents, loadTrainingGroups, NstpStudent } from '../data/nstpData';
+import { loadAccounts, loadAssessments, loadModules, loadStudents, loadTrainingGroups, NstpAccount, NstpAssessment, NstpComponent, NstpModule, NstpStudent, NstpTrainingGroup, UNASSIGNED_COMPONENT_LABEL } from '../data/nstpData';
 import { createXlsxWorkbook } from '../utils/xlsxExport';
 import { apiGet } from '../services/apiClient';
-import { fetchAdminGrades, type SemesterGrade } from '../services/grades';
+import { fetchAdminGrades, fetchCoordinatorGrades, type SemesterGrade } from '../services/grades';
+import { fetchCoordinatorStudents, fetchCoordinatorTrainingGroups } from '../services/coordinator';
+import type { AuthenticatedUser } from '../services/authUser';
+import { fetchManagedModules } from '../services/modules';
+import { fetchManagedAssessments } from '../services/assessments';
+import { facilitatorRecordToAccount, fetchMyFacilitators } from '../services/staff';
+import { useCoordinatorScope } from '../hooks/useCoordinatorScope';
 import { getCurrentAcademicYear } from '../utils/academicYear';
 
 const PALETTE = ['#2563eb', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4'];
@@ -26,21 +32,114 @@ const PALETTE = ['#2563eb', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6', '#06b6d4
 type ReportProfile = 'executive' | 'academic' | 'operations';
 type StudentReportTab = 'overview' | 'academic' | 'components' | 'activity';
 
-export default function ReportsCenter({ user }: { user: any }) {
+/**
+ * Everything the report renders, whatever the role. Both branches below produce
+ * this same shape, so the rest of the component never needs to know which source
+ * it came from — and never needs a second `isCoordinator ? … : …` per field.
+ */
+type ReportSource = {
+  students: NstpStudent[];
+  modules: NstpModule[];
+  assessments: NstpAssessment[];
+  facilitators: NstpAccount[];
+  trainingGroups: NstpTrainingGroup[];
+};
+
+const EMPTY_REPORT_SOURCE: ReportSource = {
+  students: [], modules: [], assessments: [], facilitators: [], trainingGroups: [],
+};
+
+/**
+ * Reads the client snapshot store that `syncAllFromApi` populates from the
+ * `/nstp/admin/*` endpoints.
+ *
+ * Called from exactly one place: the non-coordinator branch of the ternary in
+ * `ReportsCenter`. That structure is the point. The loaders used to be invoked
+ * unconditionally at the top of the component and the results discarded for
+ * coordinators, which meant a coordinator's render did read admin-scoped
+ * localStorage — harmless only for as long as nobody wired one of those values
+ * into a coordinator code path by mistake. Keeping the calls inside this function
+ * makes "a coordinator never reads the admin snapshot" a property of the control
+ * flow rather than a promise in a comment.
+ */
+function loadSnapshotReportSource(): ReportSource {
+  return {
+    students: loadStudents(),
+    modules: loadModules(),
+    assessments: loadAssessments(),
+    facilitators: loadAccounts().filter((account) => account.role === 'facilitator'),
+    trainingGroups: loadTrainingGroups(),
+  };
+}
+
+export default function ReportsCenter({ user }: { user: AuthenticatedUser }) {
   const [profile, setProfile] = useState<ReportProfile>('executive');
   const [studentReportTab, setStudentReportTab] = useState<StudentReportTab>('overview');
   const [exportState, setExportState] = useState<'idle' | 'working' | 'error'>('idle');
 
-  const students = loadStudents();
-  const modules = loadModules();
-  const assessments = loadAssessments();
+  const isCoordinator = user.role === 'coordinator';
+  const coordinatorScope = useCoordinatorScope(isCoordinator ? user : null);
+
+  const [coordinatorData, setCoordinatorData] = useState<ReportSource>(EMPTY_REPORT_SOURCE);
+  const [coordinatorLoading, setCoordinatorLoading] = useState(isCoordinator);
+  const [coordinatorError, setCoordinatorError] = useState<string | null>(null);
   const [grades, setGrades] = useState<SemesterGrade[]>([]);
-  const accounts = loadAccounts();
-  const trainingGroups = loadTrainingGroups();
-  const facilitators = accounts.filter((account) => account.role === 'facilitator');
+  const [gradeError, setGradeError] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Deliberately keyed on the resolved scope: no request is issued, and no
+    // figure is rendered, until the server has confirmed which program this
+    // coordinator owns.
+    if (!isCoordinator || !coordinatorScope.scope) return;
+    let cancelled = false;
+    setCoordinatorLoading(true);
+    setCoordinatorError(null);
+
+    (async () => {
+      try {
+        const moduleRecords = await fetchManagedModules('coordinator');
+        // Student progress is measured against the published modules in this
+        // coordinator's own scope, so the percentage comes from real records.
+        const publishedTarget = moduleRecords.filter((module) => (module.status || 'DRAFT') === 'PUBLISHED').length;
+        const [students, assessments, facilitators, trainingGroups] = await Promise.all([
+          fetchCoordinatorStudents(publishedTarget),
+          fetchManagedAssessments('coordinator'),
+          fetchMyFacilitators(),
+          fetchCoordinatorTrainingGroups(),
+        ]);
+        if (cancelled) return;
+        setCoordinatorData({
+          students,
+          modules: moduleRecords,
+          assessments,
+          facilitators: facilitators.map(facilitatorRecordToAccount),
+          trainingGroups,
+        });
+      } catch (error) {
+        if (cancelled) return;
+        // The report renders an explicit failure rather than falling back to the
+        // snapshot store, which would silently show unrelated data.
+        setCoordinatorData(EMPTY_REPORT_SOURCE);
+        setCoordinatorError(error instanceof Error ? error.message : 'Unable to load component report data.');
+      } finally {
+        if (!cancelled) setCoordinatorLoading(false);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [isCoordinator, coordinatorScope.scope]);
+
+  // The single fork in the data path. A coordinator's figures come only from
+  // coordinator-scoped endpoints; every other role reads the snapshot store,
+  // which is correct for them because it is populated from the admin endpoints
+  // their session is entitled to.
+  const { students, modules, assessments, facilitators, trainingGroups } = isCoordinator
+    ? coordinatorData
+    : loadSnapshotReportSource();
 
   useEffect(() => {
     const schoolYear = getCurrentAcademicYear();
+    setGradeError(null);
     if (user.role === 'student') {
       apiGet<{ success: boolean; data: SemesterGrade[] }>('/nstp/students/me/grades').then((response) => setGrades(response.data)).catch(() => setGrades([]));
     } else if (user.role === 'admin') {
@@ -48,8 +147,21 @@ export default function ReportsCenter({ user }: { user: any }) {
         fetchAdminGrades({ schoolYear, semester: 'FIRST', pageSize: 100 }),
         fetchAdminGrades({ schoolYear, semester: 'SECOND', pageSize: 100 }),
       ]).then(([first, second]) => setGrades([...first.data, ...second.data])).catch(() => setGrades([]));
+    } else if (isCoordinator && coordinatorScope.scope) {
+      // /nstp/coordinators/grades ignores any client componentId and restricts
+      // the result to the coordinator's own components server-side.
+      Promise.all([
+        fetchCoordinatorGrades({ schoolYear, semester: 'FIRST', pageSize: 100 }),
+        fetchCoordinatorGrades({ schoolYear, semester: 'SECOND', pageSize: 100 }),
+      ]).then(([first, second]) => {
+        setGrades([...first.data, ...second.data]);
+        setGradeError(null);
+      }).catch((error) => {
+        setGrades([]);
+        setGradeError(error instanceof Error ? error.message : 'Unable to load coordinator grades.');
+      });
     } else setGrades([]);
-  }, [user.id, user.role]);
+  }, [user.id, user.role, isCoordinator, coordinatorScope.scope]);
 
   const roleScopedAssessments = useMemo(() => {
     if (user.role === 'facilitator') {
@@ -92,7 +204,10 @@ export default function ReportsCenter({ user }: { user: any }) {
   const componentData = useMemo(() => {
     const source = user.role === 'student' ? visibleStudents : students;
     const map = source.reduce<Record<string, number>>((acc, student) => {
-      acc[student.component] = (acc[student.component] || 0) + 1;
+      // Students without a component are counted as unassigned rather than
+      // folded into a component they were never placed in.
+      const bucket = student.component ?? UNASSIGNED_COMPONENT_LABEL;
+      acc[bucket] = (acc[bucket] || 0) + 1;
       return acc;
     }, {});
 
@@ -153,7 +268,7 @@ export default function ReportsCenter({ user }: { user: any }) {
       student.degreeProgram || '',
       student.assignedMunicipality || student.municipality || '',
       student.facilitatorName || '',
-      student.component,
+      student.component ?? UNASSIGNED_COMPONENT_LABEL,
       `${student.progress}%`,
       String(student.assessments),
       student.status,
@@ -203,6 +318,7 @@ export default function ReportsCenter({ user }: { user: any }) {
     const summaryAoA = [
       ['NSTP Report Summary'],
       ['Role', user.role],
+      ...(isCoordinator ? [['Component Scope', coordinatorScope.label]] : []),
       ['Profile', profile],
       ['Generated At', new Date().toLocaleString()],
       ['Total Students', String(totalStudents)],
@@ -290,7 +406,7 @@ export default function ReportsCenter({ user }: { user: any }) {
     doc.text('NSTP Analytics Report', 14, 14);
     doc.setFontSize(10);
     doc.text(`Generated: ${new Date().toLocaleString()}`, 14, 21);
-    doc.text(`Role: ${String(user.role).toUpperCase()}  |  Profile: ${profile.toUpperCase()}`, 14, 27);
+    doc.text(`Role: ${String(user.role).toUpperCase()}  |  Profile: ${profile.toUpperCase()}${isCoordinator ? `  |  Component: ${coordinatorScope.label}` : ''}`, 14, 27);
 
       const addReportTable = (title: string, head: string[], body: string[][], color: [number, number, number]) => {
         const currentY = ((doc as any).lastAutoTable?.finalY || 34) + 12;
@@ -340,7 +456,15 @@ export default function ReportsCenter({ user }: { user: any }) {
         `${assessment.passingScore}%`,
         String(assessment.questions.length),
       ]), [234, 88, 12]);
-      if (user.role === 'admin') {
+      // Both collections are safe for a coordinator, and for the same reason: the
+      // rows came from scoped endpoints. Facilitators from
+      // /coordinators/facilitators, which returns only the facilitators they own;
+      // training groups from /nstp/coordinators/component/training-groups, whose
+      // query restricts the rows to the coordinator's own components. The PDF
+      // used to omit training groups for coordinators — a leftover from before
+      // that endpoint existed — while the on-screen table and the XLSX export
+      // already included them, so the same report disagreed with itself.
+      if (user.role === 'admin' || isCoordinator) {
         addReportTable('Facilitator Assignments', ['Facilitator', 'Email', 'Municipalities', 'Students'], facilitatorRows, [8, 145, 178]);
         addReportTable('Training Groups', ['School Year', 'Semester', 'Component', 'Facilitator', 'Municipality', 'Programs', 'Students', 'Load'], trainingGroupRows, [22, 163, 74]);
       }
@@ -352,21 +476,53 @@ export default function ReportsCenter({ user }: { user: any }) {
     }
   };
 
+  // A coordinator report is component-specific, so it stays behind the same gate
+  // as the rest of the coordinator surface: nothing is rendered or exported
+  // until the server has confirmed the assigned program. Falling through to a
+  // default would produce a report labelled with the wrong component.
+  if (isCoordinator && coordinatorScope.state.status !== 'ready') {
+    return (
+      <div className="grid min-h-[60vh] place-items-center p-8">
+        <div className="w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          {coordinatorScope.state.status === 'resolving' ? (
+            <div role="status" className="space-y-3">
+              <Loader2 className="mx-auto h-8 w-8 animate-spin text-blue-700" aria-hidden="true" />
+              <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">Confirming your coordinator program…</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">Reports stay hidden until the server confirms your assigned NSTP program.</p>
+            </div>
+          ) : (
+            <div role="alert" className="space-y-3">
+              <ShieldAlert className="mx-auto h-8 w-8 text-rose-600" aria-hidden="true" />
+              <p className="text-lg font-semibold text-slate-900 dark:text-slate-100">Coordinator program unavailable</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">{coordinatorScope.state.message}</p>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   if (user.role === 'student') {
-    const student = matchedStudent || visibleStudents[0] || {
+    // The roster record is the real subject of this report. When it has not synced
+    // yet the screen falls back to the session, and the fallback is typed with
+    // `component: NstpComponent | null` on purpose: the previous `|| 'CWTS'`
+    // invented a classification, so an unclassified student was shown a full CWTS
+    // report — cohort comparisons included — as if it were their own.
+    type StudentReportSubject = Omit<NstpStudent, 'component'> & { component: NstpComponent | null };
+    const student: StudentReportSubject = matchedStudent || visibleStudents[0] || {
       name: user.name || 'Student',
       email: user.email || '',
-      component: user.component || 'CWTS',
+      component: user.component ?? null,
       progress: 0,
       assessments: 0,
       status: 'pending',
       studentId: user.studentId || user.id,
       municipality: user.municipality || '',
-      facilitatorName: user.facilitatorName || '',
       notes: '',
       updatedAt: new Date().toISOString(),
       id: user.id || 'student',
-    } as NstpStudent;
+    };
+    const componentLabel = student.component ?? UNASSIGNED_COMPONENT_LABEL;
     const relevantModules = modules.filter((module) => module.component === 'Common' || module.component === student.component);
     const moduleTarget = Math.max(1, relevantModules.length || 8);
     const modulesCompleted = Math.min(moduleTarget, Math.max(0, Math.round((student.progress / 100) * moduleTarget)));
@@ -397,7 +553,7 @@ export default function ReportsCenter({ user }: { user: any }) {
       date: new Date(Date.now() - index * 6 * 24 * 60 * 60 * 1000).toLocaleDateString(),
     }));
     const activityRows = [
-      ['Component placement', `${student.component} component assigned`],
+      ['Component placement', student.component ? `${student.component} component assigned` : 'Component not yet assigned'],
       ['Module progress', `${modulesCompleted} of ${moduleTarget} modules completed`],
       ['Assessment status', `${assessmentsCompleted} of ${assessmentTarget} assessments completed`],
       ['Grade release', studentGrade?.isReleased ? `${studentGrade.semester === 'FIRST' ? 'First' : 'Second'} Semester grade released` : 'Semester grade pending'],
@@ -475,7 +631,7 @@ export default function ReportsCenter({ user }: { user: any }) {
             <article className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-950">
               <div className="mb-4 flex items-center justify-between gap-3">
                 <h3 className="font-semibold text-slate-950 dark:text-white">{studentReportTab === 'activity' ? 'Activity Timeline' : 'Performance Over Time'}</h3>
-                <span className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">{student.component}</span>
+                <span className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-600 dark:border-slate-700 dark:text-slate-300">{componentLabel}</span>
               </div>
               {studentReportTab === 'activity' ? (
                 <div className="space-y-3">
@@ -600,22 +756,28 @@ export default function ReportsCenter({ user }: { user: any }) {
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
           <div>
             <p className="text-xs uppercase tracking-[0.16em] font-semibold text-blue-700 dark:text-blue-300">Reports Module</p>
-            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">Analytics and Decision Dashboard</h2>
-            <p className="text-sm text-slate-600 mt-1 dark:text-slate-300">Centralized reporting with export-ready data for academic planning and program governance.</p>
+            <h2 className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+              {isCoordinator ? `${coordinatorScope.label} Analytics and Decision Dashboard` : 'Analytics and Decision Dashboard'}
+            </h2>
+            <p className="text-sm text-slate-600 mt-1 dark:text-slate-300">
+              {isCoordinator
+                ? `Every figure below is restricted by the server to your ${coordinatorScope.label} component records.`
+                : 'Centralized reporting with export-ready data for academic planning and program governance.'}
+            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button
               onClick={exportPdf}
-              disabled={exportState === 'working'}
-              className="clickable-button inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+              disabled={exportState === 'working' || coordinatorLoading}
+              className="clickable-button inline-flex items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
             >
               <FileDown className="w-4 h-4 text-rose-600" />
               Export PDF
             </button>
             <button
               onClick={exportExcel}
-              disabled={exportState === 'working'}
-              className="clickable-button inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white"
+              disabled={exportState === 'working' || coordinatorLoading}
+              className="clickable-button inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
             >
               <FileSpreadsheet className="w-4 h-4" />
               Export Excel
@@ -627,6 +789,27 @@ export default function ReportsCenter({ user }: { user: any }) {
         )}
         {exportState === 'error' && (
           <p className="mt-3 text-sm text-rose-600 dark:text-rose-300">Export failed. Please try again.</p>
+        )}
+        {isCoordinator && coordinatorLoading && (
+          <p role="status" className="mt-3 inline-flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300">
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            Loading {coordinatorScope.label} component records…
+          </p>
+        )}
+        {isCoordinator && !coordinatorLoading && coordinatorError && (
+          <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+            {coordinatorError}
+          </p>
+        )}
+        {isCoordinator && gradeError && (
+          <p role="alert" className="mt-3 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/40 dark:bg-rose-500/10 dark:text-rose-200">
+            Grade data is unavailable: {gradeError}
+          </p>
+        )}
+        {isCoordinator && !coordinatorLoading && !coordinatorError && students.length === 0 && (
+          <p className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+            No students are enrolled in {coordinatorScope.label} yet, so the figures below are all zero.
+          </p>
         )}
       </div>
 

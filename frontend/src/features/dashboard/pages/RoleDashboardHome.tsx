@@ -27,15 +27,20 @@ import {
   loadModules,
   loadPendingStudentRegistrations,
   loadStudents,
-  NstpAccount,
 } from '../../../data/nstpData';
 import { getCurrentSchoolYear } from '../../../utils/academicYear';
 import { getCurrentAcademicYear } from '../../../utils/academicYear';
 import { apiGet } from '../../../services/apiClient';
+import type { AuthenticatedUser } from '../../../services/authUser';
 import type { SemesterGrade } from '../../../services/grades';
 
 type RoleDashboardHomeProps = {
-  user: NstpAccount & Record<string, any>;
+  /**
+   * The signed-in session. It was `NstpAccount & Record<string, any>`, which no
+   * session can actually satisfy and whose index signature turned every field
+   * read here into `any`.
+   */
+  user: AuthenticatedUser;
   role: 'admin' | 'student' | 'facilitator';
   onNavigate?: (target: string) => void;
 };
@@ -125,9 +130,13 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
     { name: 'First Semester', released: activeGrades.filter((grade) => grade.semester === 'FIRST').length, pending: activeGrades.some((grade) => grade.semester === 'FIRST') ? 0 : 1 },
     { name: 'Second Semester', released: activeGrades.filter((grade) => grade.semester === 'SECOND').length, pending: activeGrades.some((grade) => grade.semester === 'SECOND') ? 0 : 1 },
   ];
+  // Enrolment progress exists on a student session only. Administrators render
+  // these same bars as a generic "not applicable" baseline (35/20/50), which is
+  // exactly what the falsy branches produce when there is no student to read.
+  const studentUser = user.role === 'student' ? user : null;
   const studentMilestones = [
-    { label: 'General Education', value: user.generalEducationComplete ? 100 : 35 },
-    { label: 'Component Exam', value: user.examTaken ? 100 : 20 },
+    { label: 'General Education', value: studentUser?.generalEducationComplete ? 100 : 35 },
+    { label: 'Component Exam', value: studentUser?.examTaken ? 100 : 20 },
     { label: 'Classification', value: user.component ? 100 : 50 },
     { label: 'Grade Release', value: studentGrade ? 100 : 35 },
   ];

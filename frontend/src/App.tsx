@@ -18,9 +18,11 @@ const ReportsCenter = React.lazy(() => import('./pages/ReportsPage'));
 const GradesPage = React.lazy(() => import('./pages/GradesPage'));
 const RoleDashboardHome = React.lazy(() => import('./features/dashboard/pages/RoleDashboardHome'));
 import CollapsibleRoleSidebar from './components/layout/CollapsibleRoleSidebar';
-import { safeJsonParse, loadModules, loadAssessments, loadAccounts, saveAccounts, loadQualifyingExamResults, loadStudents, initializeFromApi, syncAllFromApi, syncCollectionFromApi, retryPendingSyncs, setSessionUser } from './data/nstpData';
+import { safeJsonParse, loadModules, loadAssessments, loadAccounts, saveAccounts, loadQualifyingExamResults, loadStudents, initializeFromApi, syncAllFromApi, syncCollectionFromApi, retryPendingSyncs, setSessionUser, toNstpComponent, clearSessionSnapshots } from './data/nstpData';
+import type { NstpAccount } from './data/nstpData';
 import { connectSocket, disconnectSocket } from './services/socketClient';
 import { fetchCurrentUser, logoutCurrentUser } from './services/api';
+import { normalizeAuthenticatedUser, type AuthenticatedUser, type StudentUser } from './services/authUser';
 import { toast, Toaster } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/dialog';
 import SectionErrorBoundary from './components/common/SectionErrorBoundary';
@@ -59,11 +61,53 @@ const SENSITIVE_STORAGE_KEYS = new Set([
 ]);
 
 function cleanupSensitiveStorage() {
+  // Two stores, both cleared: the browser keys listed above, and the in-memory
+  // snapshot map inside nstpData. Clearing only `localStorage` used to leave the
+  // previous account's cached roster/module/assessment snapshots alive for the
+  // next sign-in on the same tab, because the app does not reload between them.
+  clearSessionSnapshots();
   for (const key of Object.keys(localStorage)) {
     if (SENSITIVE_STORAGE_KEYS.has(key) || /^(progress-|assessments-|assessments-history-|examResult-|general-education-)/.test(key)) {
       localStorage.removeItem(key);
     }
   }
+}
+
+/**
+ * The only fields the locally cached `nstp-accounts` row may contribute to a
+ * signed-in student session.
+ *
+ * The previous code spread the whole row over the session (`{ ...user,
+ * ...account }`). That row lives in localStorage, which the browser owns, so an
+ * edited entry could overwrite `id`, `email` or `role` — repainting a student as
+ * an administrator in the shell — and could put back the `password` field
+ * `normalizeAuthenticatedUser` deliberately strips. Identity now comes from the
+ * API alone; the snapshot may only advance enrolment progress and display
+ * details, which is all it is written to carry.
+ */
+function toStudentSnapshotFields(account: NstpAccount | undefined): Partial<StudentUser> {
+  if (!account) return {};
+  return {
+    ...(account.name ? { name: account.name } : {}),
+    ...(account.studentId ? { studentId: account.studentId } : {}),
+    ...(account.title ? { title: account.title } : {}),
+    ...(account.municipality ? { municipality: account.municipality } : {}),
+    ...(account.municipalities ? { municipalities: account.municipalities } : {}),
+    ...(account.componentId ? { componentId: account.componentId } : {}),
+    // Component labels from storage are validated rather than trusted, for the
+    // same reason the normaliser validates them: an unrecognised label must read
+    // as "no component", never as a component the roster does not know about.
+    ...(toNstpComponent(account.component) ? { component: toNstpComponent(account.component)! } : {}),
+    ...(toNstpComponent(account.preferredComponent)
+      ? { preferredComponent: toNstpComponent(account.preferredComponent)! }
+      : {}),
+    ...(account.generalEducationComplete === undefined
+      ? {}
+      : { generalEducationComplete: account.generalEducationComplete }),
+    ...(account.examTaken === undefined ? {} : { examTaken: account.examTaken }),
+    ...(typeof account.examScore === 'number' ? { examScore: account.examScore } : {}),
+    ...(account.componentAccessStatus ? { componentAccessStatus: account.componentAccessStatus } : {}),
+  };
 }
 
 const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
@@ -177,13 +221,18 @@ const NAV_ITEMS: Record<string, Array<{ id: ShellSection; label: string; icon: a
     { id: 'overview', label: 'Dashboard', icon: LayoutGrid },
     { id: 'coordinator', label: 'Facilitators', icon: Users },
     { id: 'modules', label: 'Modules', icon: BookOpen },
+    { id: 'assessments', label: 'Assessments', icon: ClipboardList },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'announcements', label: 'Announcements', icon: Bell },
   ],
 };
 
 export default function App() {
-  const [user, setUser] = useState<any>(null);
+  // The session is a discriminated union, so every screen below has to prove
+  // which workspace it is rendering before it can read role-specific fields.
+  // `normalizeAuthenticatedUser` is the only writer, and it returns null rather
+  // than an unclassifiable user, which is why `null` is the sole other state.
+  const [user, setUser] = useState<AuthenticatedUser | null>(null);
   const [activeSection, setActiveSection] = useState<ShellSection>('overview');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
     const savedTheme = localStorage.getItem('nstp-theme') as 'light' | 'dark' | null;
@@ -212,7 +261,7 @@ export default function App() {
   const queryClient = useQueryClient();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const authTimerRef = useRef<number | null>(null);
-  const pendingLoginRef = useRef<any>(null);
+  const pendingLoginRef = useRef<AuthenticatedUser | null>(null);
   const authModeRef = useRef<'login' | 'logout'>('login');
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
@@ -239,15 +288,10 @@ export default function App() {
       if (nextUser) {
         setUser(nextUser);
         setSessionUser(nextUser);
-        if (nextUser.role === 'admin') {
-          setActiveSection('overview');
-        } else if (nextUser.role === 'facilitator') {
-          setActiveSection('facilitator');
-        } else if (nextUser.role === 'coordinator') {
-          setActiveSection('overview');
-        } else {
-          setActiveSection('overview');
-        }
+        // Facilitators land on their own workspace; every other role opens on the
+        // overview its shell defines. The four-branch chain this replaced set the
+        // same section three times, which read as though the roles differed.
+        setActiveSection(nextUser.role === 'facilitator' ? 'facilitator' : 'overview');
       }
     } else {
       setUser(null);
@@ -267,11 +311,15 @@ export default function App() {
       try {
         const current = await fetchCurrentUser();
         if (current?.success && current.data) {
-          const { id, name, email, role, ...profile } = current.data;
-          const authenticatedUser = { id, name, email, role: String(role || '').toLowerCase(), ...profile };
+          // /auth/me nests coordinator scope under coordinatorProfile.scope,
+          // so it must go through the same normaliser as the login payload.
+          const authenticatedUser = normalizeAuthenticatedUser(current.data);
+          // A payload the normaliser cannot classify is not a session: leaving
+          // `user` null returns the visitor to the login screen instead of
+          // opening a workspace this client cannot prove they belong to.
           setUser(authenticatedUser);
           setSessionUser(authenticatedUser);
-          await initializeFromApi();
+          if (authenticatedUser) await initializeFromApi();
         }
       } catch {
         // apiClient has already shown the appropriate error; do not strand the
@@ -391,22 +439,25 @@ export default function App() {
         !['waitlisted', 'not-qualified'].includes(examResult.status),
       );
       const hasRosterAccess = Boolean(rosterRecord?.component && rosterRecord.status === 'active');
-      const nextUser = {
+      const nextUser: AuthenticatedUser = {
         ...user,
-        ...(account || {}),
+        // Only enrolment progress is merged from the local snapshot. Spreading the
+        // whole row let a browser-writable store overwrite `id`, `email` and
+        // `role` — see `toStudentSnapshotFields`.
+        ...toStudentSnapshotFields(account),
         ...(hasExamAccess
           ? {
               generalEducationComplete: true,
               preferredComponent: examResult?.preferredComponent || user.preferredComponent,
               examTaken: true,
               examScore: examResult?.score ?? user.examScore,
-              component: examResult?.assignedComponent,
+              component: examResult?.assignedComponent ?? undefined,
               componentAccessStatus: examResult?.status,
             }
           : {}),
         ...(!hasExamAccess && hasRosterAccess
           ? {
-              component: rosterRecord?.component,
+              component: rosterRecord?.component ?? undefined,
               componentAccessStatus: rosterRecord?.status,
             }
           : {}),
@@ -437,8 +488,13 @@ export default function App() {
       }
     };
     const handleCurrentUserUpdate = (event: Event) => {
-      const nextUser = (event as CustomEvent).detail;
-      if (nextUser?.id === user.id) setUser(nextUser);
+      // The event detail is a locally stored account row, not an API response, so
+      // it goes through the same normaliser as a login payload: credentials are
+      // stripped, the component label is validated, and an unclassifiable role is
+      // rejected. Both the id and the role must still match the live session —
+      // otherwise a broadcast row could swap the signed-in account or promote it.
+      const nextUser = normalizeAuthenticatedUser((event as CustomEvent).detail);
+      if (nextUser && nextUser.id === user.id && nextUser.role === user.role) setUser(nextUser);
     };
 
     refreshStudentAccess();
@@ -554,19 +610,29 @@ export default function App() {
     localStorage.setItem(`nstp-notice-read-${user.id}`, JSON.stringify(nextReadIds));
   };
 
-  const stripPassword = (data: any) => {
-    if (!data) return data;
-    const { password, ...rest } = data;
+  const stripPassword = (data: unknown) => {
+    if (!data || typeof data !== 'object') return data;
+    const { password, ...rest } = data as Record<string, unknown>;
     return rest;
   };
 
-  const handleLogin = (userData: any) => {
+  const handleLogin = (userData: unknown) => {
     if (isAuthTransitioning) return;
 
-    pendingLoginRef.current = stripPassword(userData);
+    // Normalise here as well: any future caller of onLogin gets the same shape.
+    const authenticatedUser = normalizeAuthenticatedUser(stripPassword(userData));
+    if (!authenticatedUser) {
+      // Fail closed. The normaliser returns null when the payload has no id or no
+      // role this client can serve, and there is no safe workspace to guess: the
+      // old code carried the unknown role through and landed on the student shell.
+      toast.error('Signed in, but this account has no workspace assigned in this app. Ask an administrator to check its role.');
+      return;
+    }
+
+    pendingLoginRef.current = authenticatedUser;
     authModeRef.current = 'login';
     setIsAuthTransitioning(true);
-    setAuthSplash({ visible: true, mode: 'login', userName: userData?.name });
+    setAuthSplash({ visible: true, mode: 'login', userName: authenticatedUser.name });
     clearAuthTimer();
     authTimerRef.current = window.setTimeout(() => {
       completeAuthTransition();
@@ -589,6 +655,10 @@ export default function App() {
     setHeaderHint(null);
 
     await logoutCurrentUser();
+    // Also cleared here, not only on boot. Logging out does not remount the app,
+    // so without this a second account signing in on the same tab could read the
+    // previous coordinator's cached module/assessment snapshot until a refresh.
+    cleanupSensitiveStorage();
     navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_SENSITIVE_CACHES' });
 
     authModeRef.current = 'logout';
@@ -642,19 +712,23 @@ export default function App() {
     );
   }
 
-  // Check student enrollment status
-  const generalEducationComplete = user.generalEducationComplete || false;
-  const preferredComponent = user.preferredComponent || null;
-  const examTaken = user.examTaken || false;
-  const componentAssigned = user.component || null;
+  // The enrolment funnel below belongs to students only. Narrowing once here is
+  // what lets the gates read enrolment flags at all — under the session union
+  // those fields exist on `StudentUser` and nowhere else, so a staff account can
+  // no longer fall into the student funnel by carrying a stray flag.
+  const studentUser = user.role === 'student' ? user : null;
+  const generalEducationComplete = studentUser?.generalEducationComplete || false;
+  const preferredComponent = studentUser?.preferredComponent || null;
+  const examTaken = studentUser?.examTaken || false;
+  const componentAssigned = studentUser?.component || null;
 
-  if (!generalEducationComplete && user.role === 'student') {
+  if (studentUser && !generalEducationComplete) {
     return <>
       <GeneralEducation
-        user={user}
+        user={studentUser}
         onLogout={handleLogout}
         onComplete={() => {
-          const updatedUser = { ...user, generalEducationComplete: true };
+          const updatedUser = { ...studentUser, generalEducationComplete: true };
           setUser(updatedUser);
         }}
       />
@@ -662,13 +736,15 @@ export default function App() {
     </>;
   }
 
-  if (generalEducationComplete && !preferredComponent && user.role === 'student') {
+  if (studentUser && generalEducationComplete && !preferredComponent) {
     return <>
       <EnrollmentPage
-        user={user}
+        user={studentUser}
         onLogout={handleLogout}
         onEnroll={(component) => {
-          const updatedUser = { ...user, preferredComponent: component };
+          // `component` is typed `NstpComponent`, not `string`: EnrollmentPage's
+          // options are literal-typed, so an unrecognised label cannot reach here.
+          const updatedUser = { ...studentUser, preferredComponent: component };
           setUser(updatedUser);
         }}
       />
@@ -676,17 +752,20 @@ export default function App() {
     </>;
   }
 
-  if (preferredComponent && !examTaken && user.role === 'student') {
+  if (studentUser && preferredComponent && !examTaken) {
     return <>
       <QualifyingExam
-        user={user}
+        user={studentUser}
         onLogout={handleLogout}
         preferredComponent={preferredComponent}
         onComplete={(score, assignment) => {
-          const updatedUser = {
-            ...user,
+          const updatedUser: StudentUser = {
+            ...studentUser,
             examTaken: true,
-            examScore: score,
+            // A skipped or timed-out attempt reports null. The session records "no
+            // score" by leaving the field out rather than storing a null that the
+            // dashboards would render as a zero.
+            ...(typeof score === 'number' ? { examScore: score } : {}),
             ...(assignment?.assignedComponent
               ? {
                   component: assignment.assignedComponent,
@@ -705,10 +784,11 @@ export default function App() {
     </>;
   }
 
-  if (examTaken && !componentAssigned && user.role === 'student') {
+  if (studentUser && examTaken && !componentAssigned) {
     return <>
-      <PendingAssignment user={user} onLogout={handleLogout} onAssign={(component) => {
-        const updatedUser = { ...user, component };
+      <PendingAssignment user={studentUser} onLogout={handleLogout} onAssign={(component) => {
+        // Validated inside PendingAssignment, which polls browser-writable storage.
+        const updatedUser = { ...studentUser, component };
         setUser(updatedUser);
       }} />
       {showLogoutModal && renderLogoutModal()}
@@ -732,21 +812,32 @@ export default function App() {
     setActiveSection(section);
     setMobileSidebarOpen(false);
   };
-  const modules = loadModules();
-  const assessments = loadAssessments();
-  const moduleCount = modules.length;
-  const assessmentCount = assessments.length;
-  const commonModuleHours = modules.reduce((total, module) => total + module.hours, 0);
-  const publishedPostModuleAssessments = modules.filter((module) =>
-    assessments.some((assessment) => assessment.status === 'published' && assessment.moduleId === module.id)
-  ).length;
-  const majorExamCount = assessments.filter((assessment) => assessment.status === 'published' && assessment.type === 'exam').length;
-  const objectiveReadiness = [
-    commonModuleHours >= 25,
-    publishedPostModuleAssessments >= moduleCount,
-    majorExamCount > 0,
-    Boolean(user.component || user.role !== 'student'),
-  ].filter(Boolean).length;
+  // Library statistics for the generic panels at the bottom of `renderSection`.
+  //
+  // Read lazily, on the one code path that renders them. These figures come from
+  // the admin-populated client snapshot (`nstp-module-library`,
+  // `nstp-assessment-library`), so evaluating them in every render of the shell
+  // meant a coordinator session touched admin-scoped storage for numbers it never
+  // displays — coordinators get their own figures from coordinator-scoped
+  // endpoints in CoordinatorDashboard and ReportsCenter.
+  const readLibraryStats = () => {
+    const modules = loadModules();
+    const assessments = loadAssessments();
+    const moduleCount = modules.length;
+    const assessmentCount = assessments.length;
+    const commonModuleHours = modules.reduce((total, module) => total + module.hours, 0);
+    const publishedPostModuleAssessments = modules.filter((module) =>
+      assessments.some((assessment) => assessment.status === 'published' && assessment.moduleId === module.id)
+    ).length;
+    const majorExamCount = assessments.filter((assessment) => assessment.status === 'published' && assessment.type === 'exam').length;
+    const objectiveReadiness = [
+      commonModuleHours >= 25,
+      publishedPostModuleAssessments >= moduleCount,
+      majorExamCount > 0,
+      Boolean(user.component || user.role !== 'student'),
+    ].filter(Boolean).length;
+    return { moduleCount, assessmentCount, commonModuleHours, publishedPostModuleAssessments, majorExamCount, objectiveReadiness };
+  };
 
   const openAdminView = (view: 'overview' | 'enrollment' | 'students' | 'tools' | 'modules' | 'assessments' | 'facilitators' | 'assignments', label: string) => {
     setAdminInitialView(view);
@@ -846,7 +937,7 @@ export default function App() {
         name: user.name,
         email: user.email,
         role: user.role,
-        component: user.component || user.preferredComponent || null,
+        component: user.component || preferredComponent || null,
       },
       preferences: accountPreferences,
       localDataStores: [
@@ -1015,6 +1106,12 @@ export default function App() {
     : 'U';
 
   const renderSection = () => {
+    // Only the student branch at the bottom of this function is reachable today:
+    // administrators, coordinators and facilitators return their own dashboards
+    // above the shell that calls `renderSection()`. The staff branches below stay
+    // as the wiring a future shell-hosted staff view would use, and the type of
+    // `user` is still the full session union here because this closure is defined
+    // before those early returns narrow it.
     if (user.role === 'admin') {
       if (activeSection === 'reports') return <SectionErrorBoundary name="Reports"><ReportsCenter user={user} /></SectionErrorBoundary>;
       if (activeSection === 'announcements') return <SectionErrorBoundary name="Announcements"><AnnouncementsCenter user={user} /></SectionErrorBoundary>;
@@ -1048,6 +1145,7 @@ export default function App() {
     if (activeSection === 'overview') {
       return <SectionErrorBoundary name="Dashboard Home"><RoleDashboardHome user={user} role="student" onNavigate={(target) => setActiveSection(target as ShellSection)} /></SectionErrorBoundary>;
     }
+    const { moduleCount, assessmentCount, commonModuleHours, publishedPostModuleAssessments, majorExamCount, objectiveReadiness } = readLibraryStats();
     return (
       <div className="grid auto-rows-[minmax(120px,auto)] gap-4 md:grid-cols-6">
         <div className="bento-panel md:col-span-4 md:row-span-2 p-6">
@@ -1493,8 +1591,12 @@ export default function App() {
                   </div>
                   <div className="grid gap-3">
                     {[
-                      ['NSTP component', user.component || user.preferredComponent || (user.role === 'admin' ? 'Program administration' : user.role === 'facilitator' ? 'Lecture facilitator' : 'Pending assignment')],
-                      ['Portal access', user.role === 'admin' ? 'Full administrative workspace' : user.role === 'facilitator' ? 'Facilitator lecture and assessment tools' : 'Student learning and grade portal'],
+                      // This panel lives in the student shell, which the three role
+                      // returns above are placed before, so `user` is a student here
+                      // and the admin/facilitator arms these lines used to carry were
+                      // unreachable — the session union is what made that visible.
+                      ['NSTP component', user.component || preferredComponent || 'Pending assignment'],
+                      ['Portal access', 'Student learning and grade portal'],
                       ['Last portal view', navItems.find((item) => item.id === activeSection)?.label || activeSection],
                     ].map(([label, value]) => (
                       <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-950">
@@ -1565,7 +1667,7 @@ export default function App() {
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-500/30 dark:bg-emerald-500/10">
                     <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800 dark:text-emerald-200"><LockKeyhole className="h-4 w-4" /> Secure session active</p>
-                    <p className="mt-2 text-sm text-emerald-800/80 dark:text-emerald-100/80">Your account is scoped to {user.role === 'admin' ? 'full administrative access' : user.role === 'facilitator' ? 'facilitator-only publishing access' : 'student learning access'}.</p>
+                    <p className="mt-2 text-sm text-emerald-800/80 dark:text-emerald-100/80">Your account is scoped to student learning access.</p>
                   </div>
                   {[
                     'Role-based access protects restricted modules.',

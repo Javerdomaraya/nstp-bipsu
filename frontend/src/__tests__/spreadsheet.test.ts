@@ -57,6 +57,8 @@ describe('bounded spreadsheet import and export', () => {
     ])));
     expect(strFromU8(archive['xl/workbook.xml'])).toContain('name="Students"');
     const students = strFromU8(archive['xl/worksheets/sheet1.xml']);
+    expect(students).toContain('<cols><col min="1" max="1" width="10" customWidth="1"/>');
+    expect(students).toContain('<col min="2" max="2" width="13" customWidth="1"/></cols>');
     expect(students).toContain('&apos;=SUM(A1:A2)');
     expect(students).not.toContain('<f>');
     expect(strFromU8(archive['xl/worksheets/sheet2.xml'])).toContain('<v>95</v>');

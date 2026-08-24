@@ -2,6 +2,28 @@ import bcrypt from 'bcrypt';
 import prisma from '../../db/prisma.js';
 import { assertPlaintextPassword } from '../auth/passwords.js';
 
+/**
+ * AUTHORIZATION AUTHORITY for coordinator scope.
+ *
+ * Every scope decision in the system resolves through this map: the request
+ * middleware (`nstp.authorization.js` → `getCurrentCoordinator`) derives a
+ * coordinator's `allowedComponentIds` from it, each write is re-checked against
+ * it (`requireAllowedComponent`), and the websocket fan-out filters on it. It is
+ * imported, never re-declared, so no caller can hold a divergent copy, and it is
+ * frozen so a later import cannot widen a coordinator's scope at runtime.
+ *
+ * A scope that is missing from this map is refused (400/403) — it is never
+ * defaulted to CWTS or to any other component, because a guessed scope would
+ * hand one program's records to another program's coordinator.
+ *
+ * `frontend/src/services/staff.ts` keeps a deliberate DISPLAY-ONLY copy
+ * (`SCOPE_COMPONENT_TYPES`) so forms can offer the right options offline; it
+ * grants nothing and is re-validated here on every request. The two are not
+ * merged into a shared module because that would either ship server
+ * authorization code to the browser or make the server read from the frontend
+ * workspace. `backend/test/scope-mapping-drift.test.js` compares them as text
+ * and fails if they drift.
+ */
 export const COORDINATOR_SCOPE_TYPES = Object.freeze({
   CWTS: ['CWTS', 'CWTS_COAST_GUARD'],
   MTS: ['MTS_ARMY', 'MTS_NAVY'],

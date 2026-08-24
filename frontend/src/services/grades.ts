@@ -44,8 +44,18 @@ export async function fetchAdminGrades(filters: { schoolYear: string; semester: 
   return apiGet<ApiEnvelope<SemesterGrade[]>>(`/nstp/admin/grades?${params.toString()}`);
 }
 
-export async function fetchAdminGradeRoster(filters: { schoolYear: string; semester: AcademicSemester; page: number; pageSize: number; search?: string }) {
-  const params = new URLSearchParams({ schoolYear: filters.schoolYear, semester: filters.semester, page: String(filters.page), pageSize: String(filters.pageSize) });
+/**
+ * GET /nstp/coordinators/grades — the server restricts the result to the
+ * coordinator's own component ids and ignores any componentId sent by the
+ * client, so no additional narrowing happens here.
+ */
+export async function fetchCoordinatorGrades(filters: { schoolYear: string; semester: AcademicSemester; page?: number; pageSize?: number; search?: string }) {
+  const params = new URLSearchParams({ schoolYear: filters.schoolYear, semester: filters.semester, page: String(filters.page || 1), pageSize: String(filters.pageSize || 100) });
+  if (filters.search) params.set('search', filters.search);
+  return apiGet<ApiEnvelope<SemesterGrade[]>>(`/nstp/coordinators/grades?${params.toString()}`);
+}
+
+export async function fetchAdminGradeRoster(filters: { schoolYear: string; semester: AcademicSemester; page: number; pageSize: number; search?: string }) {  const params = new URLSearchParams({ schoolYear: filters.schoolYear, semester: filters.semester, page: String(filters.page), pageSize: String(filters.pageSize) });
   if (filters.search) params.set('search', filters.search);
   return apiGet<ApiEnvelope<GradeRosterRow[]>>(`/nstp/admin/grade-roster?${params.toString()}`);
 }

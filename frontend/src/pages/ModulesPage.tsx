@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BookOpen, Clock, CheckCircle, Search, Sparkles, Gauge, ChevronRight, Plus, Trash2, Save, ArrowLeft, ArrowUp, ArrowDown, Copy, Wrench, Video, ExternalLink } from 'lucide-react';
 import { createEmptyModule, loadModules, replaceAssessmentsSnapshot, replaceModulesSnapshot, type NstpAssessment, type NstpModule, type NstpRole } from '../data/nstpData';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../utils/moduleUrls';
 import { apiGet, apiPost } from '../services/apiClient';
 import { createManagedModule, fetchManagedModules, removeManagedModule, updateManagedModule } from '../services/modules';
 import { fetchManagedAssessments, fetchStudentAssessments } from '../services/assessments';
+import { useCoordinatorScope } from '../hooks/useCoordinatorScope';
+import type { AuthenticatedUser } from '../services/authUser';
 
-export default function ModulesPage({ user, role = 'student', onBack }: { user: any; role?: NstpRole; onBack?: () => void }) {
+export default function ModulesPage({ user, role = 'student', onBack }: { user: AuthenticatedUser; role?: NstpRole; onBack?: () => void }) {
   const [modules, setModules] = useState<NstpModule[]>([]);
   const [assessments, setAssessments] = useState<NstpAssessment[]>([]);
   const [selectedModuleId, setSelectedModuleId] = useState<string | null>(null);
@@ -19,22 +21,56 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
   const [moduleSaving, setModuleSaving] = useState(false);
   const effectiveRole = (role === 'student' && user.role === 'facilitator' ? 'facilitator' : role) as NstpRole;
 
-  useEffect(() => {
-    const reloadModules = () => {
-      const storedModules = loadModules();
-      setModules(storedModules);
-      setSelectedModuleId((current) => current && storedModules.some((module) => module.id === current)
-        ? current
-        : storedModules[0]?.id || null);
-      setEditorDraft((current) => current && storedModules.some((module) => module.id === current.id)
-        ? storedModules.find((module) => module.id === current.id) || null
-        : storedModules[0] || null);
-    };
+  // A coordinator's module and assessment lists are component-scoped by the API,
+  // so they are not a picture of the whole library. They stay in this component's
+  // state and never touch the shared `nstp-module-library` /
+  // `nstp-assessment-library` snapshot, which the admin screens, the shell
+  // counters and RoleDashboardHome read as if it were global. Admin, facilitator
+  // and student sessions keep using the snapshot: for them it is populated from
+  // the endpoints their own role is entitled to.
+  const isComponentScoped = effectiveRole === 'coordinator';
 
+  // Display metadata only, and requested only for the role that has a scope:
+  // passing `null` for everyone else keeps `useCoordinatorScope` from probing
+  // /auth/me for an answer that is known in advance (see ReportsPage, which does
+  // the same). The list decides which component options this editor may *offer*;
+  // whether a write is allowed is re-derived from the database by
+  // backend/src/modules/nstp/nstp.service.js#resolveModuleComponent on every
+  // request, and a component outside the coordinator's program is refused there
+  // regardless of what this select contains.
+  const coordinatorScope = useCoordinatorScope(isComponentScoped ? user : null);
+  const allowedComponents = coordinatorScope.allowedComponents;
+
+  /** Applies a module list to local state, keeping the selection and editor valid. */
+  const applyModuleList = useCallback((nextModules: NstpModule[]) => {
+    setModules(nextModules);
+    setSelectedModuleId((current) => current && nextModules.some((module) => module.id === current)
+      ? current
+      : nextModules[0]?.id || null);
+    setEditorDraft((current) => current && nextModules.some((module) => module.id === current.id)
+      ? nextModules.find((module) => module.id === current.id) || null
+      : nextModules[0] || null);
+  }, []);
+
+  useEffect(() => {
+    // Coordinators neither seed from nor subscribe to the shared snapshot:
+    // reading it would surface modules from outside their component while their
+    // own scoped request was still in flight.
+    if (isComponentScoped) return;
+    const reloadModules = () => applyModuleList(loadModules());
     reloadModules();
     window.addEventListener('nstp-modules-updated', reloadModules);
     return () => window.removeEventListener('nstp-modules-updated', reloadModules);
-  }, []);
+  }, [applyModuleList, isComponentScoped]);
+
+  /**
+   * The single place that decides where a module list goes: component state
+   * always, shared snapshot only when the list is not component-scoped.
+   */
+  const applyModules = useCallback((nextModules: NstpModule[]) => {
+    applyModuleList(nextModules);
+    if (!isComponentScoped) replaceModulesSnapshot(nextModules);
+  }, [applyModuleList, isComponentScoped]);
 
   useEffect(() => {
     let active = true;
@@ -42,7 +78,7 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
     fetchManagedModules(effectiveRole)
       .then((records) => {
         if (!active) return;
-        replaceModulesSnapshot(records);
+        applyModules(records);
         setModuleError(null);
       })
       .catch((error) => {
@@ -52,7 +88,7 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
         if (active) setModulesLoading(false);
       });
     return () => { active = false; };
-  }, [effectiveRole]);
+  }, [applyModules, effectiveRole]);
 
   useEffect(() => {
     const request = effectiveRole === 'student'
@@ -60,9 +96,9 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
       : fetchManagedAssessments(effectiveRole as 'admin' | 'coordinator' | 'facilitator');
     request.then((records) => {
       setAssessments(records);
-      replaceAssessmentsSnapshot(records);
+      if (!isComponentScoped) replaceAssessmentsSnapshot(records);
     }).catch((error) => setModuleError(error instanceof Error ? error.message : 'Unable to load linked assessments.'));
-  }, [effectiveRole]);
+  }, [effectiveRole, isComponentScoped]);
 
   useEffect(() => {
     if (effectiveRole !== 'student') return;
@@ -80,8 +116,6 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
       setEditorDraft(selectedModule);
     }
   }, [selectedModule]);
-
-  const applyModules = (nextModules: NstpModule[]) => replaceModulesSnapshot(nextModules);
 
   const toggleModuleComplete = async (moduleId: string) => {
     if (progress[moduleId]) return;
@@ -116,7 +150,11 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
   const draftModules = modules.filter((module) => (module.status || 'DRAFT') === 'DRAFT');
   const archivedModules = modules.filter((module) => module.status === 'ARCHIVED');
 
-  const studentComponent = user.component || user.preferredComponent || 'Common';
+  // The preferred component is a student-only field: it exists while the exam
+  // result is pending and is what decides which component modules are offered.
+  // Staff sessions have no preference to fall back on, so they read as 'Common'.
+  const preferredComponent = user.role === 'student' ? user.preferredComponent : undefined;
+  const studentComponent = user.component || preferredComponent || 'Common';
   const studentVisibleModules = isAdmin
     ? modules
     : modules.filter((module) => {
@@ -178,6 +216,19 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
       setModuleError('Enter a title, description, and valid duration before saving.');
       return;
     }
+    // Pre-flight guidance, not an authorization decision: the server refuses a
+    // component-less or out-of-scope coordinator write on its own
+    // (nstp.service.js#resolveModuleComponent). Saying so here turns an opaque
+    // 403 into an instruction, and never widens anything — the request is still
+    // sent for every value the picker can produce.
+    if (isComponentScoped && (!editorDraft.component || editorDraft.component === 'Common')) {
+      setModuleError(allowedComponents.length > 0
+        ? 'Choose the NSTP component this module belongs to. Coordinators cannot create shared "Common" modules.'
+        : coordinatorScope.state.status === 'unavailable'
+          ? coordinatorScope.state.message
+          : 'Confirming your component program — try again in a moment.');
+      return;
+    }
     setModuleSaving(true);
     setModuleError(null);
     try {
@@ -225,9 +276,19 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
   };
 
   const createModule = () => {
+    // A coordinator may only attach a module to a component inside its own
+    // program, and the API refuses a component-less ('Common') module for any
+    // narrowed actor. `createEmptyModule()` produces 'Common', so a coordinator
+    // creating a module here used to be a guaranteed 403 with no way to correct
+    // it — there was no component field on the form. The draft now starts on the
+    // coordinator's first allowed component (matching CoordinatorDashboard) and
+    // the editor exposes the picker below.
     const nextModule = createEmptyModule();
-    setSelectedModuleId(nextModule.id);
-    setEditorDraft(nextModule);
+    const seeded = isComponentScoped && allowedComponents[0]
+      ? { ...nextModule, component: allowedComponents[0] }
+      : nextModule;
+    setSelectedModuleId(seeded.id);
+    setEditorDraft(seeded);
     setModuleError(null);
   };
 
@@ -606,6 +667,29 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
                     className="w-full min-h-28 rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
                   />
                 </div>
+                {isComponentScoped && (
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">NSTP Component</label>
+                    <select
+                      value={detailModule.component && detailModule.component !== 'Common' ? detailModule.component : ''}
+                      onChange={(event) => updateDraft({ component: (event.target.value || undefined) as NstpModule['component'] })}
+                      disabled={allowedComponents.length === 0}
+                      className="w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 disabled:bg-slate-100"
+                    >
+                      <option value="">Select a component…</option>
+                      {allowedComponents.map((component) => (
+                        <option key={component} value={component}>{component}</option>
+                      ))}
+                    </select>
+                    <p className="mt-2 text-xs text-slate-500">
+                      {allowedComponents.length > 0
+                        ? `Your ${coordinatorScope.label} program covers ${allowedComponents.join(' and ')}. The server confirms this scope on every save.`
+                        : coordinatorScope.state.status === 'unavailable'
+                          ? coordinatorScope.state.message
+                          : 'Confirming your component program…'}
+                    </p>
+                  </div>
+                )}
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-2">Difficulty</label>
                   <select

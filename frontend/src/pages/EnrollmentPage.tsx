@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles } from 'lucide-react';
 import RoleShell from '../components/layout/RoleShell';
+import type { NstpComponent } from '../data/nstpData';
+import type { StudentUser } from '../services/authUser';
 
+// `as const` is what keeps `name` a literal type rather than a widened `string`,
+// so the compiler — not a runtime check downstream — proves that every option on
+// this screen is one of the five canonical `NstpComponent` labels. A typo here is
+// a build error instead of a component preference nothing else recognises.
 const NSTP_COMPONENTS = [
   {
     id: 'cwts',
@@ -73,12 +79,14 @@ const NSTP_COMPONENTS = [
       'Leadership at sea'
     ]
   }
-];
+] as const;
 
-export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: any; onEnroll: (component: string) => void; onLogout: () => void }) {
+type ComponentOption = (typeof NSTP_COMPONENTS)[number];
+
+export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: StudentUser; onEnroll: (component: NstpComponent) => void; onLogout: () => void }) {
   // Show completion message
   const hasCompletedGeneralEd = user.generalEducationComplete;
-  const [selectedComponent, setSelectedComponent] = useState<any>(null);
+  const [selectedComponent, setSelectedComponent] = useState<ComponentOption | null>(null);
 
   const handleEnroll = () => {
     if (selectedComponent) {

@@ -80,6 +80,47 @@ jobs:
         env:
           DATABASE_URL: postgresql://nstp:nstp_ci_password@localhost:5432/nstp_ci
         run: npm run migrate:deploy
+
+      # migrate:deploy above runs the orphan and preflight gates against an EMPTY
+      # database, where every check is legitimately skipped as bootstrap. That
+      # means their SQL was never executed: until this step, a syntax error in any
+      # of the 16 preflight checks or 38 orphan checks could reach production
+      # unnoticed, because the gate would report a clean bootstrap run either way.
+      #
+      # Re-running them against the now-migrated schema forces every check to
+      # execute for real. The database is empty of rows, so all of them must come
+      # back CLEAR; a failure here is a broken check, not dirty data.
+      - name: Execute the deployment gates against the migrated schema
+        env:
+          DATABASE_URL: postgresql://nstp:nstp_ci_password@localhost:5432/nstp_ci
+        run: |
+          npm run report:orphans
+          npm run preflight:production
+
+      # Proves the real PL/pgSQL parses, the ::"CoordinatorScope" casts resolve,
+      # and RAISE EXCEPTION rolls the transaction back. test/migration-scope-guard
+      # .test.js asserts the migration's structure and executes a SQLite
+      # transcription of its logic; neither can prove any of the above.
+      #
+      # This step is destructive and self-restoring. nstp_ci is a disposable
+      # service database that is discarded with the runner, and the script refuses
+      # to start against a database whose name is not on its allowlist.
+      - name: Migration guard against real PostgreSQL
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql://nstp:nstp_ci_password@localhost:5432/nstp_ci
+          MIGRATION_GUARD_TEST: '1'
+        run: |
+          psql --version
+          npm run test:migration-guard
+
+      # Doubles as verification that the destructive step above restored the
+      # foreign keys it dropped: this fails if its cleanup did not run.
+      - name: Verify physical schema after the guard test
+        env:
+          DATABASE_URL: postgresql://nstp:nstp_ci_password@localhost:5432/nstp_ci
+        run: npm run verify:schema
+
       - name: Check migration status
         env:
           DATABASE_URL: postgresql://nstp:nstp_ci_password@localhost:5432/nstp_ci
