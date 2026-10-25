@@ -1010,11 +1010,10 @@ export async function upsertAdminResource(name, lookup, payload) {
       }
       const updatedStudentData = { ...(nextPayload.data || {}), ...studentExtras };
 
-      return await prisma.studentProfile.upsert({
+      const studentProfile = await prisma.studentProfile.upsert({
         where: { studentNumber: nextPayload.studentId || nextPayload.studentNumber },
         update: {
           userId: user.id,
-          componentId: component.id,
           course: nextPayload.course,
           yearLevel: nextPayload.yearLevel,
           data: updatedStudentData,
@@ -1023,11 +1022,23 @@ export async function upsertAdminResource(name, lookup, payload) {
           id: nextPayload.id,
           userId: user.id,
           studentNumber: nextPayload.studentId || nextPayload.studentNumber,
-          componentId: component.id,
           course: nextPayload.course,
           yearLevel: nextPayload.yearLevel,
           data: updatedStudentData,
         },
+      });
+
+      // Route component placement through placeStudent to guarantee StudentProfile.componentId
+      // and ACTIVE Enrollment stay synchronized
+      if (componentType) {
+        await placeStudent(prisma, {
+          studentId: studentProfile.id,
+          canonicalComponent: componentType,
+        });
+      }
+
+      return await prisma.studentProfile.findUnique({
+        where: { id: studentProfile.id },
       });
     }
 
