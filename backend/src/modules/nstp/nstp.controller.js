@@ -50,7 +50,12 @@ function adminResourceHandlers(resource) {
         : payload.studentId ? { studentId: payload.studentId }
           : payload.email ? { email: payload.email }
             : { id: `${resource}-${Date.now()}` };
-      const record = await upsertAdminResource(resource, lookup, { ...lookup, ...payload });
+      const record = await upsertAdminResource(
+        resource,
+        lookup,
+        { ...lookup, ...payload },
+        { actor: req.user?.id || req.user?.email || payload.actor || 'admin' }
+      );
       emitCollectionChange(resource, 'upserted');
       return res.status(201).json(record);
     },

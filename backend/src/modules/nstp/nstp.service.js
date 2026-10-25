@@ -3,7 +3,7 @@ import prisma from '../../db/prisma.js';
 import { adminAccountSelect, adminStudentSelect, pendingRegistrationSelect, toAdminAccountDto, toAdminStudentDto } from '../auth/user.dto.js';
 import { assertPlaintextPassword } from '../auth/passwords.js';
 import { normalizeModuleUrls } from './module-url.validation.js';
-import { normalizeSlotLimits, toCanonicalComponentType } from './component-normalization.js';
+import { normalizeSlotLimits, toCanonicalComponentType, DEFAULT_CANONICAL_SLOT_LIMITS } from './component-normalization.js';
 
 const now = () => new Date().toISOString();
 
@@ -821,7 +821,7 @@ export async function listAdminResource(name, filters = {}) {
   return [];
 }
 
-export async function upsertAdminResource(name, lookup, payload) {
+export async function upsertAdminResource(name, lookup, payload, context = {}) {
   if (Object.hasOwn(payload || {}, 'passwordHash')) {
     const error = new Error('passwordHash is not accepted. Supply a plaintext password through the approved provisioning flow.');
     error.statusCode = 400;
@@ -1078,24 +1078,242 @@ export async function upsertAdminResource(name, lookup, payload) {
     if (name === 'attendance-records') return await upsertSimple(prisma.attendanceRecord);
     if (name === 'attendance-sessions') return await upsertSimple(prisma.attendanceSession);
     if (name === 'qualifying-results') {
-      const result = await upsertSimple(prisma.qualifyingExamResult);
-      if (nextPayload.assignedComponent && nextPayload.userId) {
-        const canonicalComp = toComponentType(nextPayload.assignedComponent);
-        if (canonicalComp) {
-          await placeStudent(prisma, {
-            userId: nextPayload.userId,
-            canonicalComponent: canonicalComp,
-          });
-          await prisma.qualifyingExamAttempt.updateMany({
+      const actorId = context?.actor?.id || context?.actor?.userId || (typeof context?.actor === 'string' ? context.actor : (nextPayload.actor || 'admin'));
+
+      return await prisma.$transaction(async (tx) => {
+        let student = null;
+        let user = null;
+        if (nextPayload.userId) {
+          student = await tx.studentProfile.findFirst({
             where: { userId: nextPayload.userId },
+          });
+          user = await tx.user.findUnique({
+            where: { id: nextPayload.userId },
+          });
+        } else if (nextPayload.studentId) {
+          student = await tx.studentProfile.findUnique({
+            where: { id: nextPayload.studentId },
+          });
+          if (student?.userId) {
+            user = await tx.user.findUnique({
+              where: { id: student.userId },
+            });
+          }
+        }
+
+        const allowedResultFields = [
+          'id', 'userId', 'userName', 'userEmail', 'preferredComponent',
+          'score', 'timestamp', 'assignedComponent', 'rank', 'status',
+          'adminOverride', 'attemptNumber', 'startedAt', 'expiresAt', 'submittedAt',
+        ];
+        const cleanResultData = {};
+        for (const [k, v] of Object.entries(nextPayload)) {
+          if (allowedResultFields.includes(k) && v !== undefined) {
+            cleanResultData[k] = v;
+          }
+        }
+
+        const rawAssigned = nextPayload.assignedComponent;
+        const isUnassign = rawAssigned === null ||
+          rawAssigned === '' ||
+          rawAssigned === 'none' ||
+          rawAssigned === 'unassigned' ||
+          (nextPayload.status === 'waitlisted' && (!rawAssigned || rawAssigned === 'none'));
+
+        const targetUserId = nextPayload.userId || student?.userId;
+
+        if (isUnassign) {
+          if (student) {
+            await tx.studentProfile.update({
+              where: { id: student.id },
+              data: { componentId: null },
+            });
+            await tx.enrollment.updateMany({
+              where: { studentId: student.id, status: 'ACTIVE' },
+              data: { status: 'DROPPED' },
+            });
+          }
+
+          if (targetUserId) {
+            await tx.qualifyingExamAttempt.updateMany({
+              where: { userId: targetUserId },
+              data: {
+                assignedComponent: null,
+                status: nextPayload.status || 'waitlisted',
+                rank: null,
+              },
+            });
+          }
+
+          cleanResultData.assignedComponent = null;
+          cleanResultData.status = nextPayload.status || 'waitlisted';
+          cleanResultData.adminOverride = false;
+          cleanResultData.rank = null;
+
+          let existing = null;
+          if (nextPayload.id) {
+            existing = await tx.qualifyingExamResult.findUnique({ where: { id: nextPayload.id } });
+          }
+          if (!existing && targetUserId) {
+            existing = await tx.qualifyingExamResult.findFirst({ where: { userId: targetUserId } });
+          }
+
+          let result;
+          if (existing) {
+            result = await tx.qualifyingExamResult.update({
+              where: { id: existing.id },
+              data: cleanResultData,
+            });
+          } else {
+            result = await tx.qualifyingExamResult.create({
+              data: {
+                id: nextPayload.id || `qxr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                userId: targetUserId,
+                userName: nextPayload.userName || user?.name || 'Student',
+                userEmail: nextPayload.userEmail || user?.email || 'student@bipsu.edu.ph',
+                preferredComponent: nextPayload.preferredComponent || 'CWTS',
+                score: nextPayload.score ?? 75,
+                timestamp: nextPayload.timestamp || new Date().toISOString(),
+                ...cleanResultData,
+              },
+            });
+          }
+
+          await tx.auditLogEntry.create({
+            data: {
+              id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              actor: actorId,
+              action: 'QUALIFYING_UNASSIGN',
+              detail: JSON.stringify({
+                userId: targetUserId,
+                studentId: student?.id,
+                reason: nextPayload.reason || 'Admin unassigned student component',
+              }),
+            },
+          });
+
+          return result;
+        }
+
+        const canonicalComp = toCanonicalComponentType(rawAssigned) || toComponentType(rawAssigned);
+        if (!canonicalComp) {
+          const err = new Error(`Invalid component type: ${rawAssigned}`);
+          err.statusCode = 400;
+          throw err;
+        }
+
+        const appState = await tx.componentApplicationState.findFirst({
+          where: { applicationClosed: false },
+          orderBy: { updatedAt: 'desc' },
+        });
+
+        if (!appState || appState.applicationClosed || !appState.schoolYear || !appState.semester) {
+          const closedErr = new Error('Cannot place student: no active qualifying application cycle is open.');
+          closedErr.statusCode = 409;
+          throw closedErr;
+        }
+
+        const slotLimits = normalizeSlotLimits(appState.slotLimits);
+        const slotLimit = slotLimits[canonicalComp] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonicalComp] ?? 0;
+
+        const currentPlacedCount = await countDistinctPlacedStudents(tx, {
+          canonicalComponent: canonicalComp,
+          currentUserId: targetUserId,
+          currentStudentId: student?.id,
+          schoolYear: appState.schoolYear,
+          semester: appState.semester,
+        });
+
+        const isQuotaExceeded = currentPlacedCount >= slotLimit;
+        const isOverride = Boolean(nextPayload.adminOverride || isQuotaExceeded);
+
+        await placeStudent(tx, {
+          userId: targetUserId,
+          studentId: student?.id,
+          canonicalComponent: canonicalComp,
+          schoolYear: appState.schoolYear,
+          semester: appState.semester,
+        });
+
+        const attemptStatus = nextPayload.status || (isOverride ? 'manual-approved' : 'assigned-alternative');
+        if (targetUserId) {
+          await tx.qualifyingExamAttempt.updateMany({
+            where: { userId: targetUserId },
             data: {
               assignedComponent: canonicalComp,
-              status: nextPayload.status || 'assigned-alternative',
+              status: attemptStatus,
             },
           });
         }
-      }
-      return result;
+
+        cleanResultData.assignedComponent = canonicalComp;
+        cleanResultData.status = attemptStatus;
+        cleanResultData.adminOverride = isOverride;
+
+        let existing = null;
+        if (nextPayload.id) {
+          existing = await tx.qualifyingExamResult.findUnique({ where: { id: nextPayload.id } });
+        }
+        if (!existing && targetUserId) {
+          existing = await tx.qualifyingExamResult.findFirst({ where: { userId: targetUserId } });
+        }
+
+        let result;
+        if (existing) {
+          result = await tx.qualifyingExamResult.update({
+            where: { id: existing.id },
+            data: cleanResultData,
+          });
+        } else {
+          result = await tx.qualifyingExamResult.create({
+            data: {
+              id: nextPayload.id || `qxr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              userId: targetUserId,
+              userName: nextPayload.userName || user?.name || 'Student',
+              userEmail: nextPayload.userEmail || user?.email || 'student@bipsu.edu.ph',
+              preferredComponent: nextPayload.preferredComponent || canonicalComp,
+              score: nextPayload.score ?? 75,
+              timestamp: nextPayload.timestamp || new Date().toISOString(),
+              ...cleanResultData,
+            },
+          });
+        }
+
+        if (isOverride) {
+          await tx.auditLogEntry.create({
+            data: {
+              id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              actor: actorId,
+              action: 'QUALIFYING_QUOTA_OVERRIDE',
+              detail: JSON.stringify({
+                userId: targetUserId,
+                studentId: student?.id,
+                component: canonicalComp,
+                currentCount: currentPlacedCount,
+                slotLimit,
+                reason: nextPayload.reason || 'Admin quota override placement',
+                adminOverride: true,
+              }),
+            },
+          });
+        } else {
+          await tx.auditLogEntry.create({
+            data: {
+              id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+              actor: actorId,
+              action: 'QUALIFYING_ADMIN_REASSIGNMENT',
+              detail: JSON.stringify({
+                userId: targetUserId,
+                studentId: student?.id,
+                component: canonicalComp,
+                reason: nextPayload.reason || 'Admin reassigned student component',
+              }),
+            },
+          });
+        }
+
+        return result;
+      });
     }
     if (name === 'component-state') {
       const statePayload = {
