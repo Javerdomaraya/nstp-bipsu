@@ -193,6 +193,18 @@ test('a student cannot submit a score', async () => {
       qualifyingExamAttempt: {
         update: async ({ data }) => data,
       },
+      studentProfile: {
+        findUnique: async () => ({ id: 'sp-1', userId: 'student-1' }),
+        update: async ({ data }) => ({ id: 'sp-1', ...data }),
+      },
+      nSTPComponent: {
+        findFirst: async () => ({ id: 'comp-cwts', type: 'CWTS' }),
+      },
+      enrollment: {
+        findFirst: async () => null,
+        create: async ({ data }) => ({ id: 'enr-1', ...data }),
+        update: async ({ data }) => ({ id: 'enr-1', ...data }),
+      },
     };
     return cb(tx);
   };
@@ -292,6 +304,18 @@ test('two concurrent submits for the last slot yield one assigned-preferred and 
       },
       qualifyingExamAttempt: {
         update: async ({ data }) => data,
+      },
+      studentProfile: {
+        findUnique: async () => ({ id: 'sp-1', userId: 'student-1' }),
+        update: async ({ data }) => ({ id: 'sp-1', ...data }),
+      },
+      nSTPComponent: {
+        findFirst: async () => ({ id: 'comp-cwts', type: 'CWTS' }),
+      },
+      enrollment: {
+        findFirst: async () => null,
+        create: async ({ data }) => ({ id: 'enr-1', ...data }),
+        update: async ({ data }) => ({ id: 'enr-1', ...data }),
       },
     };
     return cb(tx);

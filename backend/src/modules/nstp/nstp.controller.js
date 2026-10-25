@@ -21,6 +21,7 @@ import {
   listAssessmentAttempts,
   overrideAssessmentAttempt,
   upsertAdminResource,
+  placeStudent,
 } from './nstp.service.js';
 import { emitCollectionChange } from '../../websocket.js';
 import { studentSelfSelect, toStudentSelfProfileDto } from '../auth/user.dto.js';
@@ -563,6 +564,11 @@ export async function submitMyQualifyingExam(req, res) {
         status = 'assigned-preferred';
         assignedComponent = canonicalPreferred;
         rank = assignedCount + 1;
+        await placeStudent(tx, {
+          studentId: req.student?.id,
+          userId: req.user?.id,
+          canonicalComponent: canonicalPreferred,
+        });
       } else {
         status = passed ? 'waitlisted' : 'not-qualified';
         assignedComponent = null;

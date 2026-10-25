@@ -1228,3 +1228,53 @@ export async function getAdminSummary() {
     updatedAt: now(),
   };
 }
+
+export async function placeStudent(tx, { studentId, userId, canonicalComponent }) {
+  let student = null;
+  if (studentId) {
+    student = await tx.studentProfile.findUnique({ where: { id: studentId } });
+  } else if (userId) {
+    student = await tx.studentProfile.findUnique({ where: { userId } });
+  }
+  if (!student) {
+    throw new Error(`Student profile not found for placement: ${studentId || userId}`);
+  }
+
+  const component = await tx.nSTPComponent.findFirst({
+    where: {
+      OR: [
+        { type: canonicalComponent },
+        { id: canonicalComponent },
+      ],
+    },
+  });
+  const componentId = component?.id || canonicalComponent;
+
+  const updatedStudent = await tx.studentProfile.update({
+    where: { id: student.id },
+    data: { componentId },
+  });
+
+  const existingEnrollment = await tx.enrollment.findFirst({
+    where: { studentId: student.id, componentId },
+  });
+
+  let enrollment;
+  if (existingEnrollment) {
+    enrollment = await tx.enrollment.update({
+      where: { id: existingEnrollment.id },
+      data: { status: 'ACTIVE' },
+    });
+  } else {
+    enrollment = await tx.enrollment.create({
+      data: {
+        studentId: student.id,
+        componentId,
+        status: 'ACTIVE',
+        enrolledAt: new Date(),
+      },
+    });
+  }
+
+  return { student: updatedStudent, enrollment };
+}
