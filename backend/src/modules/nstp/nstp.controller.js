@@ -563,11 +563,19 @@ export async function submitMyQualifyingExam(req, res) {
       correct += 1;
     }
   }
+  // Score computed strictly before acquiring locks or starting transaction
   const rawScore = Math.round((correct / totalQuestions) * 100);
   const score = Math.min(100, Math.max(0, rawScore));
 
   const result = await withAllocationLock(async () => {
     return await prisma.$transaction(async (tx) => {
+      try {
+        await tx.$executeRawUnsafe('SET LOCAL statement_timeout = 5000;');
+        await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 4000;');
+      } catch {
+        // Fallback for mock/test environments
+      }
+
       let appState = null;
       try {
         const locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
@@ -673,6 +681,9 @@ export async function submitMyQualifyingExam(req, res) {
         rank,
         submittedAt: submittedAt.toISOString(),
       };
+    }, {
+      maxWait: 5000,
+      timeout: 10000,
     });
   });
 
