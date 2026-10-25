@@ -158,6 +158,27 @@ export const submitAssessmentSchema = z.object({
   query: z.object({}).optional(),
 });
 
+export const startQualifyingExamSchema = z.object({
+  body: z.object({
+    preferredComponent: z.string().trim().min(1, 'Preferred component is required').max(100),
+  }).strict(),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+export const submitQualifyingExamSchema = z.object({
+  body: z.object({
+    attemptId: z.string().trim().min(1, 'Attempt ID is required').max(200),
+    preferredComponent: z.string().trim().min(1, 'Preferred component is required').max(100),
+    answers: z.array(z.object({
+      questionId: z.string().trim().min(1).max(200),
+      optionIndex: z.number().int().min(0).max(20),
+    }).strict()).min(1).max(500),
+  }).strict(),
+  params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
 export const overrideAssessmentAttemptSchema = z.object({
   body: z.object({
     status: z.enum(['passed', 'failed', 'review']),

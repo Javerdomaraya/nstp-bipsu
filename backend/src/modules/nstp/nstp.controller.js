@@ -24,6 +24,12 @@ import {
 } from './nstp.service.js';
 import { emitCollectionChange } from '../../websocket.js';
 import { studentSelfSelect, toStudentSelfProfileDto } from '../auth/user.dto.js';
+import {
+  toCanonicalComponentType,
+  normalizeSlotLimits,
+  DEFAULT_CANONICAL_SLOT_LIMITS,
+} from './component-normalization.js';
+import { QUALIFYING_EXAM_ID } from '../../seed.js';
 
 const ADMIN_RESOURCES = new Set([
   'accounts', 'modules', 'assessments', 'students', 'grades',
@@ -352,35 +358,271 @@ export async function getMyQualifyingResults(req, res) {
   return sendSuccess(res, results);
 }
 
-export async function submitMyQualifyingResult(req, res) {
-  const body = req.body || {};
-  const score = typeof body.score === 'number' ? body.score : Number(body.score);
-  if (!Number.isFinite(score) || score < 0 || score > 100) {
-    return sendError(res, 'Valid exam score is required.', 400);
+let allocationLock = Promise.resolve();
+export function withAllocationLock(fn) {
+  const next = allocationLock.then(() => fn(), () => fn());
+  allocationLock = next.catch(() => {});
+  return next;
+}
+
+export async function startMyQualifyingExam(req, res) {
+  const studentId = req.student?.id;
+  if (!studentId) {
+    return sendError(res, 'Student profile not found.', 404);
   }
-  const id = body.id || `qxr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-  const preferredComponent = String(body.preferredComponent || 'CWTS');
-  const result = await prisma.qualifyingExamResult.upsert({
-    where: { id },
-    update: {
-      score: Math.round(score),
-      preferredComponent,
-      timestamp: body.timestamp || new Date().toISOString(),
-      assignedComponent: body.assignedComponent || null,
-      status: body.status || 'completed',
+
+  // 1. Verify 25 common module hours completed
+  const completedProgress = await prisma.moduleProgress.findMany({
+    where: {
+      studentId,
+      completedAt: { not: null },
+      module: {
+        componentId: null,
+      },
     },
-    create: {
-      id,
+    include: {
+      module: {
+        select: { hours: true },
+      },
+    },
+  });
+  const completedHours = completedProgress.reduce((sum, item) => sum + (Number(item.module?.hours) || 0), 0);
+  if (completedHours < 25) {
+    return sendError(res, `Cannot start exam before completing 25 hours of common modules (completed: ${completedHours} hrs).`, 400);
+  }
+
+  // 2. Retake policy: cannot exceed allowed attempts (1 attempt allowed)
+  const existingAttempts = await prisma.qualifyingExamAttempt.count({
+    where: { userId: req.user.id },
+  });
+  if (existingAttempts >= 1) {
+    return sendError(res, 'Cannot exceed maximum allowed qualifying exam attempts (maximum 1 attempt).', 400);
+  }
+
+  // 3. Find master qualifying exam
+  const exam = await prisma.exam.findFirst({
+    where: {
+      OR: [
+        { id: QUALIFYING_EXAM_ID },
+        { title: { contains: 'Qualifying' } },
+      ],
+    },
+    include: {
+      questions: {
+        orderBy: { order: 'asc' },
+      },
+    },
+  });
+
+  if (!exam || !exam.questions || exam.questions.length === 0) {
+    return sendError(res, 'Qualifying exam is not currently available.', 404);
+  }
+
+  const sanitizedQuestions = exam.questions.map((q, idx) => ({
+    id: q.id,
+    prompt: q.prompt,
+    options: q.options,
+    order: q.order ?? idx,
+  }));
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + 60 * 60 * 1000); // 60-minute limit
+  const preferredComponent = toCanonicalComponentType(req.body.preferredComponent) || req.body.preferredComponent;
+
+  const attempt = await prisma.qualifyingExamAttempt.create({
+    data: {
       userId: req.user.id,
       userName: req.user.name || 'Student',
       userEmail: req.user.email || '',
+      examId: exam.id,
       preferredComponent,
-      score: Math.round(score),
-      timestamp: body.timestamp || new Date().toISOString(),
-      assignedComponent: body.assignedComponent || null,
-      status: body.status || 'completed',
+      attemptNumber: 1,
+      startedAt,
+      expiresAt,
+      status: 'STARTED',
     },
   });
+
+  return sendSuccess(res, {
+    attemptId: attempt.id,
+    examTitle: exam.title,
+    expiresAt: attempt.expiresAt.toISOString(),
+    questions: sanitizedQuestions,
+  }, 201);
+}
+
+export async function submitMyQualifyingExam(req, res) {
+  // Reject if client attempts to submit a score
+  if (req.body?.score !== undefined) {
+    return sendError(res, 'Submitting a score is not allowed. Exam scores are computed server-side.', 400);
+  }
+
+  const { attemptId, answers } = req.body;
+  const canonicalPreferred = toCanonicalComponentType(req.body.preferredComponent) || req.body.preferredComponent;
+
+  const attempt = await prisma.qualifyingExamAttempt.findFirst({
+    where: {
+      id: attemptId,
+      userId: req.user.id,
+    },
+  });
+
+  if (!attempt) {
+    return sendError(res, 'Qualifying exam attempt not found.', 404);
+  }
+
+  if (attempt.status !== 'STARTED') {
+    return sendError(res, 'Exam attempt has already been submitted or completed.', 400);
+  }
+
+  const now = new Date();
+  if (now.getTime() > new Date(attempt.expiresAt).getTime()) {
+    await prisma.qualifyingExamAttempt.update({
+      where: { id: attempt.id },
+      data: { status: 'EXPIRED' },
+    });
+    return sendError(res, 'Exam has expired. Submission rejected.', 400);
+  }
+
+  const exam = await prisma.exam.findFirst({
+    where: {
+      OR: [
+        { id: attempt.examId || QUALIFYING_EXAM_ID },
+        { id: QUALIFYING_EXAM_ID },
+        { title: { contains: 'Qualifying' } },
+      ],
+    },
+    include: { questions: true },
+  });
+
+  if (!exam || !exam.questions || exam.questions.length === 0) {
+    return sendError(res, 'Master exam questions could not be loaded.', 500);
+  }
+
+  const questionMap = new Map(exam.questions.map((q) => [q.id, q]));
+  let correct = 0;
+  for (const ans of (answers || [])) {
+    const q = questionMap.get(ans.questionId);
+    if (q) {
+      const correctIndex = q.answer?.correctIndex;
+      if (correctIndex !== undefined && Number(ans.optionIndex) === Number(correctIndex)) {
+        correct += 1;
+      }
+    }
+  }
+  const score = Math.round((correct / exam.questions.length) * 100);
+
+  const result = await withAllocationLock(async () => {
+    return await prisma.$transaction(async (tx) => {
+      let appState = null;
+      try {
+        const locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
+        if (locked && locked.length) {
+          appState = locked[0];
+        }
+      } catch {
+        appState = await tx.componentApplicationState.findFirst();
+      }
+      if (!appState) {
+        appState = await tx.componentApplicationState.findFirst();
+      }
+
+      const slotLimits = normalizeSlotLimits(appState?.slotLimits);
+      const qualifyingScore = appState?.qualifyingScore ?? 70;
+      const slotLimit = slotLimits[canonicalPreferred] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonicalPreferred] ?? 0;
+
+      const assignedResults = await tx.qualifyingExamResult.findMany({
+        where: {
+          userId: { not: req.user.id },
+          assignedComponent: { not: null },
+          status: { notIn: ['waitlisted', 'not-qualified'] },
+        },
+        select: { assignedComponent: true },
+      });
+
+      const assignedCount = assignedResults.filter(
+        (r) => toCanonicalComponentType(r.assignedComponent) === canonicalPreferred
+      ).length;
+
+      const passed = score >= qualifyingScore;
+      let status;
+      let assignedComponent;
+      let rank;
+
+      if (passed && assignedCount < slotLimit) {
+        status = 'assigned-preferred';
+        assignedComponent = canonicalPreferred;
+        rank = assignedCount + 1;
+      } else {
+        status = passed ? 'waitlisted' : 'not-qualified';
+        assignedComponent = null;
+        rank = null;
+      }
+
+      const submittedAt = new Date();
+
+      await tx.qualifyingExamAttempt.update({
+        where: { id: attempt.id },
+        data: {
+          score,
+          answers,
+          submittedAt,
+          status,
+          assignedComponent,
+          rank,
+        },
+      });
+
+      const existingResult = await tx.qualifyingExamResult.findFirst({
+        where: { userId: req.user.id },
+      });
+      const resultId = existingResult?.id || `qxr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+      const examResult = await tx.qualifyingExamResult.upsert({
+        where: { id: resultId },
+        update: {
+          score,
+          preferredComponent: canonicalPreferred,
+          timestamp: submittedAt.toISOString(),
+          assignedComponent,
+          rank,
+          status,
+          attemptNumber: attempt.attemptNumber || 1,
+          startedAt: attempt.startedAt,
+          expiresAt: attempt.expiresAt,
+          submittedAt,
+        },
+        create: {
+          id: resultId,
+          userId: req.user.id,
+          userName: req.user.name || attempt.userName || 'Student',
+          userEmail: req.user.email || attempt.userEmail || '',
+          preferredComponent: canonicalPreferred,
+          score,
+          timestamp: submittedAt.toISOString(),
+          assignedComponent,
+          rank,
+          status,
+          attemptNumber: attempt.attemptNumber || 1,
+          startedAt: attempt.startedAt,
+          expiresAt: attempt.expiresAt,
+          submittedAt,
+        },
+      });
+
+      return {
+        id: examResult.id,
+        attemptId: attempt.id,
+        score,
+        passed,
+        assignedComponent,
+        status,
+        rank,
+        submittedAt: submittedAt.toISOString(),
+      };
+    });
+  });
+
   return sendSuccess(res, result, 201);
 }
 

@@ -9,6 +9,7 @@ import { rejectProhibitedCredentialFields, validateRequest } from '../../middlew
 import {
   createAssessmentSchema, createModuleSchema, nstpBatchSchema,
   overrideAssessmentAttemptSchema, submitAssessmentSchema,
+  startQualifyingExamSchema, submitQualifyingExamSchema,
   updateAssessmentSchema, updateModuleSchema,
 } from '../../middleware/validationSchemas.js';
 import {
@@ -20,7 +21,7 @@ import {
   adminAuditLog, adminComponentState,
   adminPendingRegistrations, adminQualifyingResults, adminStudents, adminTrainingGroups,
   getAdminSummaryController, getMyAttendance, getMyProgress,
-  getMyQualifyingResults, submitMyQualifyingResult, getMyStudentProfile, listCoordinatorClasses,
+  getMyQualifyingResults, startMyQualifyingExam, submitMyQualifyingExam, getMyStudentProfile, listCoordinatorClasses,
   listCoordinatorStudents, listInstructorClasses, listInstructorClassStudents,
   listCoordinatorTrainingGroupsController,
   completeMyModule, submitMyAssessment,
@@ -79,7 +80,8 @@ router.post('/students/me/modules/:moduleId/complete', authenticate, requireRole
 router.post('/students/me/assessments/:assessmentId/attempts', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(getCurrentStudent), validateRequest(submitAssessmentSchema), asyncHandler(submitMyAssessment));
 router.get('/students/me/attendance', authenticate, requireRole('STUDENT'), asyncHandler(getCurrentStudent), asyncHandler(getMyAttendance));
 router.get('/students/me/qualifying-results', authenticate, requireRole('STUDENT'), asyncHandler(getMyQualifyingResults));
-router.post('/students/me/qualifying-results', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(submitMyQualifyingResult));
+router.post('/students/me/qualifying-exam/start', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(getCurrentStudent), validateRequest(startQualifyingExamSchema), asyncHandler(startMyQualifyingExam));
+router.post('/students/me/qualifying-exam/submit', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(getCurrentStudent), validateRequest(submitQualifyingExamSchema), asyncHandler(submitMyQualifyingExam));
 
 router.get('/instructors/classes', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorClasses));
 router.get('/instructors/modules', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorModules));
