@@ -1229,7 +1229,12 @@ export async function getAdminSummary() {
   };
 }
 
-export async function placeStudent(tx, { studentId, userId, canonicalComponent }) {
+export async function placeStudent(tx, {
+  studentId,
+  userId,
+  canonicalComponent,
+  sectionId = null,
+}) {
   let student = null;
   if (studentId) {
     student = await tx.studentProfile.findUnique({ where: { id: studentId } });
@@ -1250,13 +1255,14 @@ export async function placeStudent(tx, { studentId, userId, canonicalComponent }
   });
   const componentId = component?.id || canonicalComponent;
 
+  // Single source of component assignment: StudentProfile.componentId
   const updatedStudent = await tx.studentProfile.update({
     where: { id: student.id },
     data: { componentId },
   });
 
   const existingEnrollment = await tx.enrollment.findFirst({
-    where: { studentId: student.id, componentId },
+    where: { studentId: student.id, componentId, sectionId: sectionId || undefined },
   });
 
   let enrollment;
@@ -1270,6 +1276,7 @@ export async function placeStudent(tx, { studentId, userId, canonicalComponent }
       data: {
         studentId: student.id,
         componentId,
+        sectionId,
         status: 'ACTIVE',
         enrolledAt: new Date(),
       },
@@ -1279,7 +1286,13 @@ export async function placeStudent(tx, { studentId, userId, canonicalComponent }
   return { student: updatedStudent, enrollment };
 }
 
-export async function countDistinctPlacedStudents(tx, { canonicalComponent, currentStudentId, currentUserId }) {
+export async function countDistinctPlacedStudents(tx, {
+  canonicalComponent,
+  currentStudentId,
+  currentUserId,
+  schoolYear,
+  semester,
+}) {
   const component = await tx.nSTPComponent.findFirst({
     where: {
       OR: [
@@ -1290,48 +1303,25 @@ export async function countDistinctPlacedStudents(tx, { canonicalComponent, curr
   });
   const componentId = component?.id || canonicalComponent;
 
-  const distinctStudentKeys = new Set();
+  // Single authoritative source: StudentProfile.componentId
+  const where = {
+    componentId,
+    ...(currentStudentId ? { id: { not: currentStudentId } } : {}),
+    ...(currentUserId ? { userId: { not: currentUserId } } : {}),
+  };
 
-  // 1. Distinct active enrollments
-  const activeEnrollments = await tx.enrollment.findMany({
-    where: {
-      componentId,
-      status: 'ACTIVE',
-      ...(currentStudentId ? { studentId: { not: currentStudentId } } : {}),
-    },
-    select: { studentId: true },
-  });
-  for (const enr of activeEnrollments) {
-    if (enr.studentId) distinctStudentKeys.add(enr.studentId);
+  // Term-aware enrollment filter when academic term parameters are supplied
+  if (schoolYear || semester) {
+    where.enrollments = {
+      some: {
+        status: 'ACTIVE',
+        section: {
+          ...(schoolYear ? { schoolYear } : {}),
+          ...(semester ? { semester } : {}),
+        },
+      },
+    };
   }
 
-  // 2. Distinct placed profiles
-  const placedProfiles = await tx.studentProfile.findMany({
-    where: {
-      componentId,
-      ...(currentStudentId ? { id: { not: currentStudentId } } : {}),
-      ...(currentUserId ? { userId: { not: currentUserId } } : {}),
-    },
-    select: { id: true, userId: true },
-  });
-  for (const prof of placedProfiles) {
-    distinctStudentKeys.add(prof.userId || prof.id);
-  }
-
-  // 3. Distinct assigned qualifying results
-  const assignedResults = await tx.qualifyingExamResult.findMany({
-    where: {
-      assignedComponent: { not: null },
-      status: { notIn: ['waitlisted', 'not-qualified'] },
-      ...(currentUserId ? { userId: { not: currentUserId } } : {}),
-    },
-    select: { userId: true, assignedComponent: true },
-  });
-  for (const res of assignedResults) {
-    if (toCanonicalComponentType(res.assignedComponent) === canonicalComponent && res.userId) {
-      distinctStudentKeys.add(res.userId);
-    }
-  }
-
-  return distinctStudentKeys.size;
+  return await tx.studentProfile.count({ where });
 }

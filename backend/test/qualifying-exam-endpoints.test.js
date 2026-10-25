@@ -195,6 +195,7 @@ test('a student cannot submit a score', async () => {
       },
       studentProfile: {
         findUnique: async () => ({ id: 'sp-1', userId: 'student-1' }),
+        count: async () => 0,
         findMany: async () => [],
         update: async ({ data }) => ({ id: 'sp-1', ...data }),
       },
@@ -308,12 +309,13 @@ test('two concurrent submits for the last slot yield one assigned-preferred and 
         update: async ({ data }) => data,
       },
       studentProfile: {
-        findUnique: async () => ({ id: 'sp-1', userId: 'student-1' }),
+        findUnique: async ({ where }) => ({ id: where.id || 'sp-1', userId: where.userId || 'student-1' }),
+        count: async () => assignedStore.filter((s) => s.status === 'assigned-preferred').length,
         findMany: async () => [],
         update: async ({ data }) => ({ id: 'sp-1', ...data }),
       },
       nSTPComponent: {
-        findFirst: async () => ({ id: 'comp-cwts', type: 'CWTS' }),
+        findFirst: async () => ({ id: 'comp-mts-navy', type: 'MTS_NAVY' }),
       },
       enrollment: {
         findMany: async () => [],
