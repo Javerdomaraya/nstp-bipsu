@@ -43,6 +43,7 @@ test('real postgres: unsectioned exam-placed students consume slots; last semest
   });
 
   // 2. Set application state with open cycle
+  await prisma.enrollment.deleteMany({ where: { schoolYear: openSY, semester: openSem } });
   await prisma.componentApplicationState.upsert({
     where: { id: 'default' },
     update: {

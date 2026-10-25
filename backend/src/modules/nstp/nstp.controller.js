@@ -395,6 +395,16 @@ export function withAllocationLock(fn) {
   return next;
 }
 
+export function isLockTimeoutError(error) {
+  if (!error) return false;
+  const code = error.code || error.meta?.code;
+  if (code === '55P03' || code === '57014' || code === '40P01' || code === 'P2034') {
+    return true;
+  }
+  const msg = String(error.message || '');
+  return /lock timeout|canceling statement due to lock timeout|lock_not_available|deadlock detected|could not obtain lock/i.test(msg);
+}
+
 export async function startMyQualifyingExam(req, res) {
   const studentId = req.student?.id;
   if (!studentId) {
@@ -610,46 +620,61 @@ export async function submitMyQualifyingExam(req, res) {
   const rawScore = Math.round((correct / totalQuestions) * 100);
   const score = Math.min(100, Math.max(0, rawScore));
 
-  try {
-    const result = await withAllocationLock(async () => {
-      return await prisma.$transaction(async (tx) => {
-        try {
-          await tx.$executeRawUnsafe('SET LOCAL statement_timeout = 5000;');
-          await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 4000;');
-        } catch {
-          // Fallback for mock/test environments
-        }
+  const MAX_LOCK_RETRIES = 3;
+  for (let attemptNum = 1; attemptNum <= MAX_LOCK_RETRIES; attemptNum++) {
+    try {
+      const result = await withAllocationLock(async () => {
+        return await prisma.$transaction(async (tx) => {
+          try {
+            await tx.$executeRawUnsafe('SET LOCAL statement_timeout = 5000;');
+            await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 4000;');
+          } catch {
+            // Fallback for mock/test environments
+          }
 
-        // Atomic attempt claim: only one concurrent submission can transition the attempt from STARTED
-        const claimResult = await tx.qualifyingExamAttempt.updateMany({
-          where: {
-            id: attempt.id,
-            userId: req.user.id,
-            status: 'STARTED',
-          },
-          data: {
-            status: 'SUBMITTING',
-          },
-        });
+          // Atomic attempt claim: only one concurrent submission can transition the attempt from STARTED
+          const claimResult = await tx.qualifyingExamAttempt.updateMany({
+            where: {
+              id: attempt.id,
+              userId: req.user.id,
+              status: 'STARTED',
+            },
+            data: {
+              status: 'SUBMITTING',
+            },
+          });
 
-        if (claimResult.count === 0) {
-          const err = new Error('Exam attempt has already been submitted or completed.');
-          err.statusCode = 400;
-          throw err;
-        }
+          if (claimResult.count === 0) {
+            const err = new Error('Exam attempt has already been submitted or completed.');
+            err.statusCode = 400;
+            throw err;
+          }
 
-        let appState = null;
-      try {
-        const locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
-        if (locked && locked.length) {
-          appState = locked[0];
-        }
-      } catch {
-        appState = await tx.componentApplicationState.findFirst();
-      }
-      if (!appState) {
-        appState = await tx.componentApplicationState.findFirst();
-      }
+          let appState = null;
+          let locked = null;
+          try {
+            locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
+          } catch (rawErr) {
+            if (isLockTimeoutError(rawErr)) {
+              throw rawErr;
+            }
+            appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+          }
+
+          if (Array.isArray(locked)) {
+            if (locked.length === 0) {
+              const notFoundError = new Error("Component application state row 'default' not found for row locking.");
+              notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
+              throw notFoundError;
+            }
+            appState = locked[0];
+          }
+
+          if (!appState) {
+            const notFoundError = new Error("Component application state row 'default' not found for row locking.");
+            notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
+            throw notFoundError;
+          }
 
       const slotLimits = normalizeSlotLimits(appState?.slotLimits);
       const qualifyingScore = appState?.qualifyingScore ?? 70;
@@ -753,12 +778,18 @@ export async function submitMyQualifyingExam(req, res) {
     });
   });
 
-  return sendSuccess(res, result, 201);
-} catch (error) {
-    if (error.statusCode === 400 || error.message?.includes('already been submitted') || error.message?.includes('already been completed')) {
-      return sendError(res, error.message || 'Exam attempt has already been submitted or completed.', 400);
+      return sendSuccess(res, result, 201);
+    } catch (error) {
+      if (isLockTimeoutError(error) && attemptNum < MAX_LOCK_RETRIES) {
+        const delayMs = 50 * Math.pow(2, attemptNum);
+        await new Promise((r) => setTimeout(r, delayMs));
+        continue;
+      }
+      if (error.statusCode === 400 || error.message?.includes('already been submitted') || error.message?.includes('already been completed')) {
+        return sendError(res, error.message || 'Exam attempt has already been submitted or completed.', 400);
+      }
+      throw error;
     }
-    throw error;
   }
 }
 
