@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CheckCircle,
   ClipboardList,
+  Clock,
   FileText,
   GraduationCap,
   Megaphone,
@@ -22,11 +23,14 @@ import {
   Video,
 } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import StatCard from '../../../components/common/StatCard';
+import DataTable, { ColumnDef } from '../../../components/common/DataTable';
 import {
   loadAssessments,
   loadModules,
   loadPendingStudentRegistrations,
   loadStudents,
+  type NstpModule,
 } from '../../../data/nstpData';
 import { getCurrentSchoolYear } from '../../../utils/academicYear';
 import { getCurrentAcademicYear } from '../../../utils/academicYear';
@@ -41,7 +45,7 @@ type RoleDashboardHomeProps = {
    * read here into `any`.
    */
   user: AuthenticatedUser;
-  role: 'admin' | 'student' | 'facilitator';
+  role: 'admin' | 'student' | 'facilitator' | 'coordinator';
   onNavigate?: (target: string) => void;
 };
 
@@ -81,6 +85,15 @@ const roleCopy = {
     actionTitle: 'Facilitator Actions',
     chartTitle: 'Owned Assessment Status',
   },
+  coordinator: {
+    eyebrow: 'Coordinator Portal',
+    title: 'NSTP Component Coordination',
+    body: 'Curate component curriculum, coordinate facilitators, manage training groups, oversee section progress, and verify official grade submissions.',
+    tone: 'from-[#061A3A] via-[#0B3D91] to-[#0B3D91]',
+    soft: 'bg-indigo-50 text-indigo-900 border-indigo-100',
+    actionTitle: 'Coordinator Operations',
+    chartTitle: 'Component Scope Overview',
+  },
 };
 
 export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashboardHomeProps) {
@@ -89,7 +102,7 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
   const assessments = loadAssessments();
   const [grades, setGrades] = useState<SemesterGrade[]>([]);
   const pending = loadPendingStudentRegistrations();
-  const copy = roleCopy[role];
+  const copy = roleCopy[role] || roleCopy.student;
 
   const publishedAssessments = assessments.filter((assessment) => assessment.status === 'published');
   const facilitatorOwned = assessments.filter((assessment) => assessment.ownerId === user.id);
@@ -198,6 +211,7 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
       ]
       : [
         { label: 'Open Modules', target: 'modules', icon: BookOpen },
+        { label: 'Check Attendance', target: 'attendance', icon: CalendarDays },
         { label: 'Take Assessment', target: 'assessments', icon: ClipboardList },
         { label: 'View Grades', target: 'grades', icon: Award },
       ];
@@ -244,8 +258,92 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
     { title: 'NSTP Orientation', date: 'May 15, 2026', icon: Megaphone },
   ];
 
+  const studentModuleColumns: ColumnDef<NstpModule>[] = [
+    {
+      key: 'title',
+      header: 'Module & Topic',
+      isPrimary: true,
+      render: (mod) => (
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="rounded-md bg-blue-100 px-1.5 py-0.5 text-[11px] font-bold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+              {mod.courseCode || 'MOD'}
+            </span>
+            <span className="font-semibold text-slate-900 dark:text-slate-100">{mod.title}</span>
+          </div>
+          <p className="mt-1 line-clamp-1 text-xs text-slate-500 dark:text-slate-400">{mod.description}</p>
+        </div>
+      ),
+    },
+    {
+      key: 'hours',
+      header: 'Hours',
+      align: 'center',
+      width: 'w-24',
+      render: (mod) => (
+        <span className="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+          <Clock className="h-3 w-3 text-blue-600" />
+          {mod.hours} hrs
+        </span>
+      ),
+    },
+    {
+      key: 'tests',
+      header: 'Assessments',
+      align: 'center',
+      width: 'w-28',
+      render: (mod) => {
+        const tests = assessments.filter((a) => a.moduleId === mod.id);
+        return (
+          <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+            {tests.length > 0 ? `${tests.length} tests ready` : 'No tests'}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      align: 'center',
+      width: 'w-32',
+      render: (_mod, index) => {
+        const isDone = index < 2;
+        const isCurrent = index === 2;
+        return (
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
+              isDone
+                ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300'
+                : isCurrent
+                ? 'bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300'
+                : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400'
+            }`}
+          >
+            {isDone ? <CheckCircle className="h-3 w-3" /> : null}
+            {isDone ? 'Completed' : isCurrent ? 'In Progress' : 'Upcoming'}
+          </span>
+        );
+      },
+    },
+    {
+      key: 'action',
+      header: 'Action',
+      align: 'right',
+      width: 'w-28',
+      render: (_mod) => (
+        <button
+          onClick={() => onNavigate?.('modules')}
+          className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-blue-700 shadow-sm transition hover:bg-blue-50 hover:border-blue-300 dark:border-slate-700 dark:bg-slate-800 dark:text-blue-300 dark:hover:bg-slate-700"
+        >
+          Study
+          <ChevronRight className="h-3 w-3" />
+        </button>
+      ),
+    },
+  ];
+
   return (
-    <div className="h-full overflow-auto bg-[#f4f7fb] p-3 text-[#071733] dark:bg-slate-950 md:p-5">
+    <div className={role === 'student' ? 'h-full text-[#071733] dark:bg-slate-950' : 'h-full overflow-auto bg-[#f4f7fb] p-3 text-[#071733] dark:bg-slate-950 md:p-5'}>
       <div className="mx-auto max-w-7xl space-y-4">
         <section className={`overflow-hidden rounded-2xl bg-gradient-to-br ${copy.tone} text-white shadow-[0_18px_42px_-34px_rgba(15,23,42,0.75)]`}>
           <div className="grid gap-5 p-4 md:p-7 xl:grid-cols-[1.1fr_0.9fr] xl:items-center">
@@ -290,27 +388,24 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
 
         <section className={`grid gap-3 sm:grid-cols-2 ${role === 'admin' ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           {kpis.map((card) => {
-            const Icon = card.icon;
+            const tone =
+              card.title === 'NSTP Grade'
+                ? 'success'
+                : card.title === 'Component'
+                ? 'warning'
+                : card.title === 'Assessments'
+                ? 'primary'
+                : 'default';
             return (
-              <button
+              <StatCard
                 key={card.title}
-                onClick={() => card.target && onNavigate?.(card.target)}
-                className="min-h-[8.5rem] rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{card.title}</p>
-                    <p className="mt-2 text-2xl font-bold text-blue-700 dark:text-blue-300">{card.value}</p>
-                    <p className="mt-1 text-xs font-medium text-slate-600 dark:text-slate-300">{card.detail}</p>
-                  </div>
-                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
-                    <Icon className="h-5 w-5" />
-                  </span>
-                </div>
-                <svg className="mt-5 h-8 w-full text-blue-500/60" viewBox="0 0 160 32" fill="none" aria-hidden="true">
-                  <path d="M0 22 C12 14, 22 26, 34 18 C46 10, 54 26, 68 13 C82 0, 94 26, 108 17 C122 9, 132 23, 144 15 C151 11, 155 14, 160 16" stroke="currentColor" strokeWidth="2" />
-                </svg>
-              </button>
+                title={card.title}
+                value={card.value}
+                detail={card.detail}
+                icon={card.icon}
+                tone={tone}
+                onClick={card.target ? () => onNavigate?.(card.target!) : undefined}
+              />
             );
           })}
         </section>
@@ -329,9 +424,9 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
               </span>
             </div>
 
-            <div className="mt-6 grid gap-3 md:grid-cols-5">
+            <div className="mt-4 sm:mt-6 grid grid-cols-2 gap-2.5 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
               {workflow.map((step, index) => (
-                <div key={step} className="relative rounded-xl border border-slate-200 bg-slate-50 p-3 text-center dark:border-slate-800 dark:bg-slate-950">
+                <div key={step} className="relative rounded-xl border border-slate-200 bg-slate-50 p-2.5 sm:p-3 text-center dark:border-slate-800 dark:bg-slate-950">
                   <span className={`grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-white ${index === workflow.length - 1 ? 'bg-emerald-500' : 'bg-blue-700'}`}>
                     {index === workflow.length - 1 ? <CheckCircle className="h-5 w-5" /> : index + 1}
                   </span>
@@ -463,6 +558,27 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
             )}
           </div>
         </section>
+
+        {role === 'student' && (
+          <section className="space-y-2">
+            <DataTable
+              title="Course Modules & Assessment Readiness"
+              subtitle="Track your Common Module completion, required hours, and assessment availability."
+              data={modules.slice(0, 5)}
+              columns={studentModuleColumns}
+              keyExtractor={(mod) => mod.id}
+              actionSlot={
+                <button
+                  onClick={() => onNavigate?.('modules')}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                >
+                  View All Modules
+                  <ChevronRight className="h-3.5 w-3.5" />
+                </button>
+              }
+            />
+          </section>
+        )}
 
         <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">

@@ -151,7 +151,7 @@ export const submitAssessmentSchema = z.object({
   body: z.object({
     answers: z.array(z.object({
       questionId: z.string().min(1).max(200),
-      optionIndex: z.number().int().min(0).max(9),
+      optionIndex: z.number().int().min(-1).max(9),
     }).strict()).min(1).max(500),
   }).strict(),
   params: z.object({ assessmentId: z.string().min(1).max(200) }),

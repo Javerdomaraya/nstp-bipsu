@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { FacilitatorUser } from '../../../services/authUser';
+import { apiGet, apiPost, apiDel } from '../../../services/apiClient';
+import { toast } from 'sonner';
 import {
   BarChart3,
   Bell,
@@ -23,7 +25,10 @@ import {
 } from 'lucide-react';
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
+import AppShell from '../../../components/layout/AppShell';
+import PageHeader from '../../../components/layout/PageHeader';
+import StatCard from '../../../components/common/StatCard';
+import DataTable, { type ColumnDef } from '../../../components/common/DataTable';
 import FacilitatorGradesView from '../components/FacilitatorGradesView';
 import {
   loadAccounts,
@@ -61,12 +66,11 @@ export default function FacilitatorDashboard({
   onNavigate?: (target: string) => void;
   embedded?: boolean;
 }) {
-  type FacilitatorView = 'dashboard' | 'enrollment-requests' | 'attendance-sheet' | 'grade-book' | 'modules' | 'reports';
+  type FacilitatorView = 'dashboard' | 'students' | 'attendance-sheet' | 'grade-book' | 'modules' | 'reports';
 
   const [view, setView] = useState<FacilitatorView>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [students, setStudents] = useState<NstpStudent[]>([]);
-  const [pendingRegistrations, setPendingRegistrations] = useState<PendingStudentRegistration[]>([]);
   const [assessments, setAssessments] = useState<NstpAssessment[]>([]);
   const [attendanceRecords, setAttendanceRecords] = useState<NstpAttendanceRecord[]>([]);
   const [attendanceSessions, setAttendanceSessions] = useState<NstpAttendanceSession[]>([]);
@@ -79,37 +83,52 @@ export default function FacilitatorDashboard({
 
   useEffect(() => {
     setStudents(loadStudents());
-    setPendingRegistrations(loadPendingStudentRegistrations());
     setAssessments(loadAssessments());
     setAttendanceRecords(loadAttendanceRecords());
     setAttendanceSessions(loadAttendanceSessions());
+
+    // Fetch live instructor attendance records from server
+    apiGet<NstpAttendanceSession[]>('/nstp/instructors/attendance-sessions', [])
+      .then((records) => {
+        if (Array.isArray(records) && records.length > 0) {
+          setAttendanceSessions(records);
+          saveAttendanceSessions(records);
+        }
+      })
+      .catch(() => {});
+
+    apiGet<NstpAttendanceRecord[]>('/nstp/instructors/attendance-records', [])
+      .then((records) => {
+        if (Array.isArray(records) && records.length > 0) {
+          setAttendanceRecords(records);
+          saveAttendanceRecords(records);
+        }
+      })
+      .catch(() => {});
+
     fetchManagedAssessments('facilitator').then((records) => {
       setAssessments(records);
       replaceAssessmentsSnapshot(records);
     }).catch(() => { /* dashboard keeps the last display cache and never treats it as writable authority */ });
   }, []);
 
-  const assignedMunicipalities = user.municipalities || [];
+  const assignedMunicipalities = (user.municipalities && user.municipalities.length > 0)
+    ? user.municipalities
+    : (user.municipality ? [user.municipality] : ['Naval', 'Almeria']);
   const scopedStudents = useMemo(
     () => students.filter((student) => student.municipality && assignedMunicipalities.includes(student.municipality)),
     [students, assignedMunicipalities],
   );
-  const scopedPending = useMemo(
-    () => pendingRegistrations.filter((registration) => registration.municipality && assignedMunicipalities.includes(registration.municipality)),
-    [pendingRegistrations, assignedMunicipalities],
-  );
 
   const query = search.trim().toLowerCase();
-  const visiblePending = scopedPending.filter((registration) => {
-    if (!query) return true;
-    return [registration.name, registration.email, registration.studentId, registration.municipality].some((value) => value?.toLowerCase().includes(query));
-  });
 
-  // Grade editing and release state are loaded by the server-backed semester
-  // grade book. Legacy browser grade snapshots are not treated as analytics.
-  const gradeValues: number[] = [];
-  const averageGrade = gradeValues.length ? gradeValues.reduce((sum, grade) => sum + grade, 0) / gradeValues.length : 0;
-  const attendanceToday = scopedStudents.length ? Math.round((scopedStudents.filter((student) => student.status === 'active' || student.status === 'graduated').length / scopedStudents.length) * 100) : 0;
+  // Calculate real attendance for the latest session
+  const latestSession = attendanceSessions[0];
+  const latestRecords = latestSession ? attendanceRecords.filter((r) => r.sessionId === latestSession.id) : [];
+  const presentCount = latestRecords.filter((r) => r.status === 'present' || r.status === 'late').length;
+  const attendanceToday = scopedStudents.length && latestRecords.length ? Math.round((presentCount / scopedStudents.length) * 100) : 0;
+  const gradeValues: number[] = scopedStudents.map((s) => s.progress || 0).filter((g) => g > 0);
+  const averageProgress = gradeValues.length ? Math.round(gradeValues.reduce((sum, grade) => sum + grade, 0) / gradeValues.length) : 0;
 
   const componentData = NSTP_COMPONENTS.map((component) => ({
     name: component,
@@ -158,6 +177,9 @@ export default function FacilitatorDashboard({
     const nextSessions = [...attendanceSessions, session].sort((a, b) => b.date.localeCompare(a.date));
     setAttendanceSessions(nextSessions);
     saveAttendanceSessions(nextSessions);
+    apiPost('/nstp/instructors/attendance-sessions', session)
+      .then(() => toast.success('Attendance session saved to server.'))
+      .catch((err) => console.warn('Could not sync session to server:', err));
     setNewSessionTitle('');
     setNewSessionDate('');
   };
@@ -170,13 +192,21 @@ export default function FacilitatorDashboard({
 
   const saveEditSession = () => {
     if (!editingSessionId || !editSessionDate) return;
+    const updated = {
+      title: editSessionTitle.trim() || 'NSTP Session',
+      date: editSessionDate,
+      id: editingSessionId,
+    };
     const nextSessions = attendanceSessions.map((s) =>
       s.id === editingSessionId
-        ? { ...s, title: editSessionTitle.trim() || s.title, date: editSessionDate, updatedAt: new Date().toISOString() }
+        ? { ...s, title: updated.title, date: updated.date, updatedAt: new Date().toISOString() }
         : s
     );
     setAttendanceSessions(nextSessions);
     saveAttendanceSessions(nextSessions);
+    apiPost('/nstp/instructors/attendance-sessions', updated)
+      .then(() => toast.success('Session updated.'))
+      .catch((err) => console.warn('Could not update session on server:', err));
     setEditingSessionId(null);
   };
 
@@ -191,6 +221,9 @@ export default function FacilitatorDashboard({
     setAttendanceRecords(nextRecords);
     saveAttendanceSessions(nextSessions);
     saveAttendanceRecords(nextRecords);
+    apiDel(`/nstp/instructors/attendance-sessions/${sessionId}`, null)
+      .then(() => toast.success('Session deleted.'))
+      .catch((err) => console.warn('Could not delete session on server:', err));
   };
 
   const getStudentAttendance = (studentId: string, sessionId: string): AttendanceStatus | undefined => {
@@ -201,26 +234,36 @@ export default function FacilitatorDashboard({
     const studentKey = student.studentId || student.id;
     const existingIndex = attendanceRecords.findIndex((r) => r.studentId === studentKey && r.sessionId === sessionId);
     let nextRecords: NstpAttendanceRecord[];
+    let targetRecord: NstpAttendanceRecord;
     if (existingIndex >= 0) {
       if (attendanceRecords[existingIndex].status === status) {
         nextRecords = attendanceRecords.filter((_, i) => i !== existingIndex);
+        targetRecord = { ...attendanceRecords[existingIndex], status };
       } else {
+        targetRecord = { ...attendanceRecords[existingIndex], status, updatedAt: new Date().toISOString() };
         nextRecords = attendanceRecords.map((r, i) =>
-          i === existingIndex ? { ...r, status, updatedAt: new Date().toISOString() } : r
+          i === existingIndex ? targetRecord : r
         );
       }
     } else {
-      nextRecords = [...attendanceRecords, {
+      targetRecord = {
         id: `atr-${Math.random().toString(36).slice(2, 10)}`,
         studentId: studentKey,
         sessionId,
         status,
         facilitatorId: user.id,
         updatedAt: new Date().toISOString(),
-      }];
+      };
+      nextRecords = [...attendanceRecords, targetRecord];
     }
     setAttendanceRecords(nextRecords);
     saveAttendanceRecords(nextRecords);
+    apiPost('/nstp/instructors/attendance-records', {
+      id: targetRecord.id,
+      studentId: studentKey,
+      sessionId,
+      status,
+    }).catch((err) => console.warn('Could not sync attendance record to server:', err));
   };
 
   const getAttendanceCounts = (sessionId: string) => {
@@ -342,24 +385,18 @@ export default function FacilitatorDashboard({
       items: [{ label: 'Dashboard', icon: LayoutDashboard, active: view === 'dashboard', badge: null, target: 'dashboard' as FacilitatorView }],
     },
     {
-      label: 'Students',
+      label: 'Class Management',
       items: [
-        { label: 'My Students', icon: Users, active: view === 'grade-book', badge: null, target: 'grade-book' as FacilitatorView },
-        { label: 'Student Approvals', icon: UserCheck, active: view === 'enrollment-requests', badge: scopedPending.length || null, target: 'enrollment-requests' as FacilitatorView },
-        { label: 'Attendance', icon: CalendarCheck, active: view === 'attendance-sheet', badge: null, target: 'attendance-sheet' as FacilitatorView },
-        { label: 'Grades', icon: ClipboardList, active: view === 'grade-book', badge: null, target: 'grade-book' as FacilitatorView },
+        { label: 'My Students', icon: Users, active: view === 'students', badge: scopedStudents.length || null, target: 'students' as FacilitatorView },
+        { label: 'Attendance Sheet', icon: CalendarCheck, active: view === 'attendance-sheet', badge: null, target: 'attendance-sheet' as FacilitatorView },
+        { label: 'Grade Book', icon: ClipboardList, active: view === 'grade-book', badge: null, target: 'grade-book' as FacilitatorView },
       ],
     },
     {
-      label: 'Modules',
+      label: 'Curriculum & Reports',
       items: [
         { label: 'Module Library', icon: BookOpen, active: view === 'modules', badge: null, target: 'modules' as FacilitatorView },
-      ],
-    },
-    {
-      label: 'Reports',
-      items: [
-        { label: 'Reports', icon: BarChart3, active: view === 'reports', badge: null, target: 'reports' as FacilitatorView },
+        { label: 'Class Reports', icon: BarChart3, active: view === 'reports', badge: null, target: 'reports' as FacilitatorView },
       ],
     },
   ];
@@ -372,255 +409,277 @@ export default function FacilitatorDashboard({
     setView(target as FacilitatorView);
   };
 
-  const kpis = [
+  const studentColumns: ColumnDef<NstpStudent>[] = [
     {
-      label: 'Total Students',
-      value: scopedStudents.length,
-      detail: 'Enrolled students',
-      action: `${Math.max(0, scopedStudents.length - 116)} this month`,
-      icon: Users,
-      toneClass: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200',
+      key: 'name',
+      header: 'Student',
+      isPrimary: true,
+      render: (student) => (
+        <div className="flex items-center gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-blue-600 text-xs font-semibold text-white sm:h-9 sm:w-9">
+            {initials(student.name || 'S')}
+          </span>
+          <div className="min-w-0">
+            <span className="block truncate font-medium text-slate-900 dark:text-slate-100">
+              {student.name || '—'}
+            </span>
+            <span className="block truncate text-xs text-slate-500">
+              {student.studentId || student.email || '—'}
+            </span>
+          </div>
+        </div>
+      ),
     },
     {
-      label: 'Student Approvals',
-      value: scopedPending.length,
-      detail: 'Pending approval',
-      action: 'View requests',
-      icon: UserCheck,
-      toneClass: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-200',
+      key: 'component',
+      header: 'Component',
+      align: 'center',
+      render: (student) => (
+        <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">
+          {student.component || 'Unassigned'}
+        </span>
+      ),
     },
     {
-      label: 'Attendance Today',
-      value: `${attendanceToday}%`,
-      detail: `${Math.round((attendanceToday / 100) * scopedStudents.length)} present / ${scopedStudents.length} total`,
-      action: 'View attendance',
-      icon: CalendarCheck,
-      toneClass: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-500/10 dark:text-emerald-200',
+      key: 'programSection',
+      header: 'Program & Section',
+      render: (student) => (
+        <span className="text-slate-600 dark:text-slate-300">
+          {student.programSection || student.degreeProgram || '—'}
+        </span>
+      ),
     },
     {
-      label: 'Average Grade',
-      value: averageGrade ? averageGrade.toFixed(2) : '0.00',
-      detail: 'Class average',
-      action: 'View grade book',
-      icon: BookOpen,
-      toneClass: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200',
+      key: 'municipality',
+      header: 'Municipality',
+      render: (student) => (
+        <span className="text-slate-600 dark:text-slate-300">
+          {student.municipality || '—'}, Biliran
+        </span>
+      ),
+    },
+    {
+      key: 'progress',
+      header: 'Progress',
+      align: 'center',
+      render: (student) => (
+        <div className="flex items-center justify-center gap-2">
+          <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">{student.progress || 0}%</span>
+        </div>
+      ),
     },
   ];
 
-  return (
-    <div className={`${embedded ? 'min-h-0 bg-transparent' : 'min-h-dvh overflow-x-hidden bg-[#f4f8fd]'} text-slate-950 dark:bg-slate-950 dark:text-slate-100`}>
-      <div className={embedded ? 'min-h-0' : 'min-h-dvh'}>
-        {!embedded && (
-          <CollapsibleRoleSidebar
-            open={mobileSidebarOpen}
-            onClose={() => setMobileSidebarOpen(false)}
-            portalLabel="Facilitator Portal"
-            closeLabel="Close facilitator navigation"
-            groups={navGroups.map((group) => ({
-              label: group.label,
-              items: group.items.map((item) => ({
-                label: item.label,
-                icon: item.icon,
-                active: item.active,
-                badge: item.badge ?? undefined,
-                onClick: () => handleSidebarAction(item.target),
-              })),
-            }))}
-            avatarLabel={initials(user.name)}
-            accountLabel="Facilitator"
-            accountTitle={user.name}
-            accountSubtitle={assignedMunicipalities.length ? `${assignedMunicipalities.join(', ')}, Biliran` : 'Awaiting assignment'}
-            accountMeta={
-              <div className="flex items-start gap-2 text-xs font-semibold text-white/75">
-                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E5B73B]" />
-                <span className="min-w-0 truncate">{assignedMunicipalities.length ? `${assignedMunicipalities.join(', ')}, Biliran` : 'Awaiting assignment'}</span>
-              </div>
-            }
-            onLogout={onLogout}
-          />
-        )}
+  const assessmentColumns: ColumnDef<NstpAssessment>[] = [
+    {
+      key: 'title',
+      header: 'Assessment',
+      isPrimary: true,
+      render: (assessment) => (
+        <span className="font-semibold text-slate-900 dark:text-slate-100">
+          {assessment.title}
+        </span>
+      ),
+    },
+    {
+      key: 'moduleId',
+      header: 'Module',
+      render: (assessment) => (
+        <span className="text-slate-600 dark:text-slate-300">
+          {assessment.moduleId || 'General'}
+        </span>
+      ),
+    },
+    {
+      key: 'submissions',
+      header: 'Submissions',
+      align: 'center',
+      render: (_assessment, index) => (
+        <span className="font-medium text-slate-600 dark:text-slate-300">
+          {Math.max(0, scopedStudents.length - index * 4)} / {scopedStudents.length}
+        </span>
+      ),
+    },
+    {
+      key: 'updatedAt',
+      header: 'Due Date',
+      render: (assessment) => (
+        <span className="text-slate-600 dark:text-slate-300">
+          {new Date(assessment.updatedAt).toLocaleDateString()}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      align: 'center',
+      render: (assessment) => (
+        <span
+          className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+            assessment.status === 'published'
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200'
+              : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'
+          }`}
+        >
+          {assessment.status}
+        </span>
+      ),
+    },
+  ];
 
-        <main className={`min-w-0 overflow-hidden rounded-[2rem] border border-slate-200 bg-white/85 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none ${embedded ? '' : 'm-3 lg:ml-[76px]'}`}>
-          <header className="flex flex-col gap-4 border-b border-slate-200 px-5 py-5 dark:border-slate-800 xl:flex-row xl:items-center xl:justify-between">
-            <div className="flex min-w-0 items-start gap-3">
-              {!embedded && (
+  const moduleColumns: ColumnDef<any>[] = [
+    {
+      key: 'title',
+      header: 'Title',
+      isPrimary: true,
+      render: (mod) => (
+        <span className="font-semibold text-slate-900 dark:text-white">
+          {mod.title}
+        </span>
+      ),
+    },
+    {
+      key: 'hours',
+      header: 'Hours',
+      align: 'center',
+      width: 'w-24',
+      render: (mod) => (
+        <span className="font-medium text-slate-600 dark:text-slate-300">
+          {mod.hours}h
+        </span>
+      ),
+    },
+    {
+      key: 'difficulty',
+      header: 'Difficulty',
+      align: 'center',
+      width: 'w-32',
+      render: (mod) => (
+        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+          {mod.difficulty}
+        </span>
+      ),
+    },
+    {
+      key: 'component',
+      header: 'Component',
+      align: 'center',
+      width: 'w-32',
+      render: (mod) => (
+        <span className="text-slate-600 dark:text-slate-300">
+          {mod.component || 'Common'}
+        </span>
+      ),
+    },
+  ];
+
+  const dashboardContent = (
+    <div className="space-y-5">
+      {view === 'dashboard' && (
+        <>
+          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <StatCard
+              title="Total Students"
+              value={scopedStudents.length}
+              detail="Enrolled students"
+              icon={Users}
+              tone="primary"
+              onClick={() => setView('students')}
+            />
+            <StatCard
+              title="Attendance Sessions"
+              value={attendanceSessions.length}
+              detail="Class sessions held"
+              icon={CalendarCheck}
+              tone="default"
+              onClick={() => setView('attendance-sheet')}
+            />
+            <StatCard
+              title="Attendance Today"
+              value={`${attendanceToday}%`}
+              detail={`${Math.round((attendanceToday / 100) * scopedStudents.length)} present / ${scopedStudents.length} total`}
+              icon={CheckCircle}
+              tone="success"
+              onClick={() => setView('attendance-sheet')}
+            />
+            <StatCard
+              title="Avg Progress"
+              value={`${averageProgress}%`}
+              detail={`${scopedStudents.filter((s) => (s.progress || 0) >= 75).length} students on track`}
+              icon={BookOpen}
+              tone="warning"
+              onClick={() => setView('grade-book')}
+            />
+          </section>
+
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+            <DataTable
+              title="Assigned Students Roster"
+              subtitle={`Active students in ${assignedMunicipalities.join(', ') || 'your municipality'}.`}
+              data={scopedStudents.slice(0, 5)}
+              columns={studentColumns}
+              keyExtractor={(r) => r.id || r.studentId || ''}
+              emptyMessage="No assigned students yet"
+              emptySubtext="Enrolled students for your municipality will appear here."
+              actionSlot={
                 <button
-                  type="button"
-                  onClick={() => setMobileSidebarOpen(true)}
-                  className="mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 lg:hidden"
-                  aria-label="Open facilitator navigation"
+                  onClick={() => setView('students')}
+                  className="text-xs font-semibold text-blue-700 hover:underline dark:text-blue-300"
                 >
-                  <Menu className="h-5 w-5" />
+                  View all ({scopedStudents.length})
                 </button>
-              )}
-              <div className="min-w-0">
-                <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700 dark:text-blue-300">Facilitator Portal</p>
-                <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white md:text-3xl">Good morning, {user.name}</h1>
-                <p className="mt-1 text-sm text-slate-500 dark:text-slate-300">Facilitator - {assignedMunicipalities[0] || 'Unassigned'}, Biliran</p>
+              }
+            />
+
+            <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+              <div className="mb-4 flex items-center justify-between gap-3">
+                <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Class Overview</h2>
+                <span className="text-sm font-medium text-blue-700 dark:text-blue-300">View all students</span>
               </div>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
-              <label className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 sm:min-w-[16rem] xl:w-[24rem]">
-                <Search className="h-4 w-4 text-slate-400" />
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Search students, assessments..."
-                  className="w-full bg-transparent text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100"
-                />
-              </label>
-              <button onClick={toggleTheme} className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-200 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                <Moon className="h-5 w-5" />
-              </button>
-              <button className="relative grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                <Bell className="h-5 w-5" />
-                {scopedPending.length ? <span className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-rose-500 text-xs font-semibold text-white">{scopedPending.length}</span> : null}
-              </button>
-              <div className="flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-700 text-sm font-semibold text-white">{initials(user.name)}</span>
-                <span className="hidden text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">{user.name}</span>
-                <ChevronDown className="h-4 w-4 text-slate-400" />
+              <div className="grid gap-5 sm:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-1 2xl:grid-cols-[220px_minmax(0,1fr)]">
+                <div className="h-56 min-h-56 min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                    <PieChart>
+                      <Pie data={componentData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={2}>
+                        {componentData.map((entry, index) => <Cell key={entry.name} fill={componentColors[index % componentColors.length]} />)}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div className="space-y-4">
+                  {componentData.map((item, index) => (
+                    <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
+                      <span className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">
+                        <span className="h-3 w-3 rounded-full" style={{ backgroundColor: componentColors[index] }} />
+                        {item.name}
+                      </span>
+                      <span className="font-semibold text-slate-900 dark:text-white">{item.value} ({scopedStudents.length ? Math.round((item.value / scopedStudents.length) * 100) : 0}%)</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </header>
+            </article>
+          </section>
 
-          <div className="space-y-5 p-5">
-            {view === 'dashboard' && (
-              <>
-                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                  {kpis.map((stat) => {
-                    const Icon = stat.icon;
-                    return (
-                      <article key={stat.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                        <div className="flex items-start gap-4">
-                          <span className={`grid h-14 w-14 place-items-center rounded-2xl ${stat.toneClass}`}>
-                            <Icon className="h-7 w-7" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{stat.label}</p>
-                            <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
-                            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{stat.detail}</p>
-                          </div>
-                        </div>
-                        <p className="mt-4 text-sm font-medium text-blue-700 dark:text-blue-300">{stat.action}</p>
-                      </article>
-                    );
-                  })}
-                </section>
-
-                <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Student Approvals</h2>
-                      <button onClick={() => setView('enrollment-requests')} className="text-sm font-medium text-blue-700 dark:text-blue-300 hover:underline">View all</button>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[720px] overflow-hidden rounded-2xl text-sm">
-                        <thead>
-                          <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                            <th className="px-4 py-3">Student</th>
-                            <th className="px-4 py-3">Municipality</th>
-                            <th className="px-4 py-3">Request Date</th>
-                            <th className="px-4 py-3">Status</th>
-                            <th className="px-4 py-3">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {visiblePending.slice(0, 5).map((registration) => (
-                            <tr key={registration.id} className="border-b border-slate-100 dark:border-slate-800">
-                              <td className="px-4 py-3">
-                                <div className="flex items-center gap-3">
-                                  <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-600 text-xs font-semibold text-white">{initials(registration.name)}</span>
-                                  <span>
-                                    <span className="block font-medium text-slate-900 dark:text-slate-100">{registration.name}</span>
-                                    <span className="text-xs text-slate-500">{registration.studentId || registration.email}</span>
-                                  </span>
-                                </div>
-                              </td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.municipality}, Biliran</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{new Date(registration.createdAt).toLocaleDateString()}</td>
-                              <td className="px-4 py-3"><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-200">Pending</span></td>
-                              <td className="px-4 py-3">
-                                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Administrator review required</span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                      {visiblePending.length === 0 ? (
-                        <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                          No pending enrollment requests for your municipality scope.
-                        </div>
-                      ) : null}
-                    </div>
-                  </article>
-
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Class Overview</h2>
-                      <span className="text-sm font-medium text-blue-700 dark:text-blue-300">View all students</span>
-                    </div>
-                    <div className="grid gap-5 sm:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-1 2xl:grid-cols-[220px_minmax(0,1fr)]">
-                      <div className="h-56 min-h-56 min-w-0">
-                        <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
-                          <PieChart>
-                            <Pie data={componentData} dataKey="value" nameKey="name" innerRadius={58} outerRadius={88} paddingAngle={2}>
-                              {componentData.map((entry, index) => <Cell key={entry.name} fill={componentColors[index % componentColors.length]} />)}
-                            </Pie>
-                            <Tooltip />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-                      <div className="space-y-4">
-                        {componentData.map((item, index) => (
-                          <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
-                            <span className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">
-                              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: componentColors[index] }} />
-                              {item.name}
-                            </span>
-                            <span className="font-semibold text-slate-900 dark:text-white">{item.value} ({scopedStudents.length ? Math.round((item.value / scopedStudents.length) * 100) : 0}%)</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </article>
-                </section>
-
-                <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Recent Assessments</h2>
-                      <button onClick={() => setView('reports')} className="text-sm font-medium text-blue-700 dark:text-blue-300 hover:underline">View all</button>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[680px] text-sm">
-                        <thead>
-                          <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                            <th className="px-4 py-3">Assessment</th>
-                            <th className="px-4 py-3">Module</th>
-                            <th className="px-4 py-3">Submissions</th>
-                            <th className="px-4 py-3">Due Date</th>
-                            <th className="px-4 py-3">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {recentAssessments.map((assessment, index) => (
-                            <tr key={assessment.id} className="border-b border-slate-100 dark:border-slate-800">
-                              <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{assessment.title}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{assessment.moduleId || 'General'}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{Math.max(0, scopedStudents.length - index * 4)} / {scopedStudents.length}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{new Date(assessment.updatedAt).toLocaleDateString()}</td>
-                              <td className="px-4 py-3">
-                                <span className={`rounded-full px-3 py-1 text-xs font-medium ${assessment.status === 'published' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
-                                  {assessment.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </article>
+          <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
+            <DataTable
+              title="Recent Assessments"
+              subtitle="Owned quizzes and examinations."
+              data={recentAssessments}
+              columns={assessmentColumns}
+              keyExtractor={(a) => a.id}
+              emptyMessage="No recent assessments"
+              emptySubtext="Create an assessment to start tracking student progress."
+              actionSlot={
+                <button
+                  onClick={() => setView('reports')}
+                  className="text-xs font-semibold text-blue-700 hover:underline dark:text-blue-300"
+                >
+                  View all
+                </button>
+              }
+            />
 
                   <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="mb-4 flex items-center justify-between gap-3">
@@ -644,59 +703,34 @@ export default function FacilitatorDashboard({
               </>
             )}
 
-            {view === 'enrollment-requests' && (
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                <div className="mb-4 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-3">
-                    <button onClick={() => setView('dashboard')} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300">
-                      <ChevronDown className="h-4 w-4 rotate-90" />
-                    </button>
-                    <div>
-                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Student Approvals</h2>
-                      <p className="text-sm text-slate-500 dark:text-slate-400">Approve or reject pending student registrations.</p>
+            {view === 'students' && (
+              <section className="space-y-4">
+                <DataTable
+                  title="My Assigned Students"
+                  subtitle={`Enrolled students within your assigned municipality scope (${assignedMunicipalities.join(', ') || 'Biliran'}).`}
+                  data={scopedStudents.filter((student) => {
+                    if (!query) return true;
+                    return [student.name, student.studentId, student.email, student.programSection, student.municipality].some((v) => v?.toLowerCase().includes(query));
+                  })}
+                  columns={studentColumns}
+                  keyExtractor={(student) => student.id || student.studentId || ''}
+                  emptyMessage="No assigned students found"
+                  emptySubtext="Students will appear here once officially enrolled by the administrator."
+                  actionSlot={
+                    <div className="flex items-center gap-2">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                        {scopedStudents.length} enrolled
+                      </span>
+                      <button
+                        onClick={() => setView('dashboard')}
+                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5 rotate-90" />
+                        Back
+                      </button>
                     </div>
-                  </div>
-                  <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{visiblePending.length} pending</span>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[720px] overflow-hidden rounded-2xl text-sm">
-                    <thead>
-                      <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                        <th className="px-4 py-3">Student</th>
-                        <th className="px-4 py-3">Municipality</th>
-                        <th className="px-4 py-3">Request Date</th>
-                        <th className="px-4 py-3">Status</th>
-                        <th className="px-4 py-3">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {visiblePending.map((registration) => (
-                        <tr key={registration.id} className="border-b border-slate-100 dark:border-slate-800">
-                          <td className="px-4 py-3">
-                            <div className="flex items-center gap-3">
-                              <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-600 text-xs font-semibold text-white">{initials(registration.name)}</span>
-                              <span>
-                                <span className="block font-medium text-slate-900 dark:text-slate-100">{registration.name}</span>
-                                <span className="text-xs text-slate-500">{registration.studentId || registration.email}</span>
-                              </span>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.municipality}, Biliran</td>
-                          <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{new Date(registration.createdAt).toLocaleDateString()}</td>
-                          <td className="px-4 py-3"><span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-200">Pending</span></td>
-                          <td className="px-4 py-3">
-                            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Administrator review required</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {visiblePending.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                      No pending enrollment requests for your municipality scope.
-                    </div>
-                  ) : null}
-                </div>
+                  }
+                />
               </section>
             )}
 
@@ -705,49 +739,25 @@ export default function FacilitatorDashboard({
             )}
 
             {view === 'modules' && (
-              <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                <div className="mb-4 flex items-center gap-3">
-                  <button onClick={() => setView('dashboard')} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300">
-                    <ChevronDown className="h-4 w-4 rotate-90" />
-                  </button>
-                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">
-                    <BookOpen className="h-5 w-5" />
-                  </span>
-                  <div>
-                    <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Module Library</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Browse published modules (read-only).</p>
-                  </div>
-                </div>
-                {modules.length === 0 ? (
-                  <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center dark:border-slate-700">
-                    <BookOpen className="mx-auto h-10 w-10 text-slate-300 dark:text-slate-600" />
-                    <p className="mt-3 text-sm font-medium text-slate-500 dark:text-slate-400">No modules available yet</p>
-                    <p className="text-xs text-slate-400 dark:text-slate-500">Modules are created by the coordinator.</p>
-                  </div>
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full min-w-[500px] text-sm">
-                      <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
-                        <tr>
-                          <th className="px-4 py-3">Title</th>
-                          <th className="px-4 py-3">Hours</th>
-                          <th className="px-4 py-3">Difficulty</th>
-                          <th className="px-4 py-3">Component</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {modules.map((mod: any) => (
-                          <tr key={mod.id} className="border-t border-slate-100 dark:border-slate-800">
-                            <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{mod.title}</td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{mod.hours}h</td>
-                            <td className="px-4 py-3"><span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">{mod.difficulty}</span></td>
-                            <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{mod.component || 'Common'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
+              <section className="space-y-4">
+                <DataTable
+                  title="Module Library"
+                  subtitle="Browse published modules (read-only)."
+                  data={modules}
+                  columns={moduleColumns}
+                  keyExtractor={(mod) => mod.id}
+                  emptyMessage="No modules available yet"
+                  emptySubtext="Modules are created and maintained by the coordinator."
+                  actionSlot={
+                    <button
+                      onClick={() => setView('dashboard')}
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                    >
+                      <ChevronDown className="h-3.5 w-3.5 rotate-90" />
+                      Back
+                    </button>
+                  }
+                />
               </section>
             )}
 
@@ -787,7 +797,7 @@ export default function FacilitatorDashboard({
                   </div>
                   <button
                     onClick={createAttendanceSession}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white hover:bg-blue-800"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white hover:bg-blue-800"
                   >
                     <Check className="h-4 w-4" />
                     Add Session
@@ -949,57 +959,37 @@ export default function FacilitatorDashboard({
 
             {view === 'reports' && (
               <section className="space-y-5">
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setView('dashboard')} className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300">
-                    <ChevronDown className="h-4 w-4 rotate-90" />
-                  </button>
-                  <div className="flex-1">
-                    <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Reports</h2>
-                    <p className="text-sm text-slate-500 dark:text-slate-400">Class analytics and grade distribution.</p>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setView('dashboard')}
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                    >
+                      <ChevronDown className="h-4 w-4 rotate-90" />
+                    </button>
+                    <div>
+                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Reports</h2>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">Class analytics and grade distribution.</p>
+                    </div>
                   </div>
                   <button
                     onClick={exportReportsPdf}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold text-white hover:bg-blue-800"
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
                   >
                     <Download className="h-4 w-4" />
                     Export PDF
                   </button>
                 </div>
                 <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                    <div className="mb-4 flex items-center justify-between gap-3">
-                      <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Recent Assessments</h2>
-                      <span className="text-sm font-medium text-blue-700 dark:text-blue-300">{recentAssessments.length} total</span>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[680px] text-sm">
-                        <thead>
-                          <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                            <th className="px-4 py-3">Assessment</th>
-                            <th className="px-4 py-3">Module</th>
-                            <th className="px-4 py-3">Submissions</th>
-                            <th className="px-4 py-3">Due Date</th>
-                            <th className="px-4 py-3">Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {recentAssessments.map((assessment, index) => (
-                            <tr key={assessment.id} className="border-b border-slate-100 dark:border-slate-800">
-                              <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{assessment.title}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{assessment.moduleId || 'General'}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{Math.max(0, scopedStudents.length - index * 4)} / {scopedStudents.length}</td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{new Date(assessment.updatedAt).toLocaleDateString()}</td>
-                              <td className="px-4 py-3">
-                                <span className={`rounded-full px-3 py-1 text-xs font-medium ${assessment.status === 'published' ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200' : 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>
-                                  {assessment.status}
-                                </span>
-                              </td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </article>
+                  <DataTable
+                    title="Recent Assessments"
+                    subtitle={`${recentAssessments.length} total assessments in scope.`}
+                    data={recentAssessments}
+                    columns={assessmentColumns}
+                    keyExtractor={(a) => a.id}
+                    emptyMessage="No assessments recorded"
+                    emptySubtext="No assessment activity found for this cohort."
+                  />
                   <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <h2 className="mb-4 text-lg font-semibold text-slate-950 dark:text-white">Grade Distribution</h2>
                     <div className="h-64 min-h-64 min-w-0">
@@ -1019,8 +1009,89 @@ export default function FacilitatorDashboard({
               </section>
             )}
           </div>
-        </main>
+  );
+
+  if (embedded) {
+    return (
+      <div className="min-h-0 bg-transparent text-slate-950 dark:text-slate-100">
+        {dashboardContent}
       </div>
-    </div>
+    );
+  }
+
+  return (
+    <AppShell
+      portalLabel="Facilitator Portal"
+      closeLabel="Close facilitator navigation"
+      sidebarOpen={mobileSidebarOpen}
+      onSidebarToggle={setMobileSidebarOpen}
+      sidebarGroups={navGroups.map((group) => ({
+        label: group.label,
+        items: group.items.map((item) => ({
+          label: item.label,
+          icon: item.icon,
+          active: item.active,
+          badge: item.badge ?? undefined,
+          onClick: () => handleSidebarAction(item.target),
+        })),
+      }))}
+      avatarLabel={initials(user.name)}
+      accountLabel="Facilitator"
+      accountTitle={user.name}
+      accountSubtitle={assignedMunicipalities.length ? `${assignedMunicipalities.join(', ')}, Biliran` : 'Awaiting assignment'}
+      accountMeta={
+        <div className="flex items-start gap-2 text-xs font-semibold text-white/75">
+          <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#E5B73B]" />
+          <span className="min-w-0 truncate">{assignedMunicipalities.length ? `${assignedMunicipalities.join(', ')}, Biliran` : 'Awaiting assignment'}</span>
+        </div>
+      }
+      onLogout={onLogout}
+      header={
+        <PageHeader
+          eyebrow="Facilitator Portal"
+          title={`Good morning, ${user.name}`}
+          subtitle={`Facilitator - ${assignedMunicipalities[0] || 'Unassigned'}, Biliran`}
+          onMenuClick={() => setMobileSidebarOpen(true)}
+          searchValue={search}
+          onSearchChange={setSearch}
+          searchPlaceholder="Search students, assessments..."
+          actionsSlot={
+            <>
+              <button
+                type="button"
+                onClick={toggleTheme}
+                className="grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                aria-label="Toggle theme"
+              >
+                <Moon className="h-4 w-4 sm:h-5 sm:w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setView('students')}
+                className="relative grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                aria-label="View notifications"
+              >
+                <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
+                {scopedStudents.length ? (
+                  <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-blue-600 text-[10px] font-semibold text-white">
+                    {scopedStudents.length}
+                  </span>
+                ) : null}
+              </button>
+              <div className="flex h-9 sm:h-10 items-center gap-2 sm:gap-2.5 rounded-xl border border-slate-200 bg-white px-2 sm:px-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                <span className="grid h-6 w-6 sm:h-7 sm:w-7 place-items-center rounded-full bg-blue-700 text-xs font-semibold text-white">
+                  {initials(user.name)}
+                </span>
+                <span className="hidden text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">
+                  {user.name}
+                </span>
+              </div>
+            </>
+          }
+        />
+      }
+    >
+      {dashboardContent}
+    </AppShell>
   );
 }

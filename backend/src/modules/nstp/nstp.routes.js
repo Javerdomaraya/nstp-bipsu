@@ -20,7 +20,7 @@ import {
   adminAuditLog, adminComponentState,
   adminPendingRegistrations, adminQualifyingResults, adminStudents, adminTrainingGroups,
   getAdminSummaryController, getMyAttendance, getMyProgress,
-  getMyQualifyingResults, getMyStudentProfile, listCoordinatorClasses,
+  getMyQualifyingResults, submitMyQualifyingResult, getMyStudentProfile, listCoordinatorClasses,
   listCoordinatorStudents, listInstructorClasses, listInstructorClassStudents,
   listCoordinatorTrainingGroupsController,
   completeMyModule, submitMyAssessment,
@@ -31,6 +31,8 @@ import {
   listCoordinatorAssessments, createCoordinatorAssessment, updateCoordinatorAssessment, removeCoordinatorAssessment,
   listInstructorAssessments, createInstructorAssessment, updateInstructorAssessment, removeInstructorAssessment,
   listMyAssessments, listAdminAssessmentAttempts, overrideAdminAssessmentAttempt,
+  listInstructorAttendanceSessions, upsertInstructorAttendanceSession, removeInstructorAttendanceSession,
+  listInstructorAttendanceRecords, upsertInstructorAttendanceRecord,
 } from './nstp.controller.js';
 
 const router = Router();
@@ -77,6 +79,7 @@ router.post('/students/me/modules/:moduleId/complete', authenticate, requireRole
 router.post('/students/me/assessments/:assessmentId/attempts', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(getCurrentStudent), validateRequest(submitAssessmentSchema), asyncHandler(submitMyAssessment));
 router.get('/students/me/attendance', authenticate, requireRole('STUDENT'), asyncHandler(getCurrentStudent), asyncHandler(getMyAttendance));
 router.get('/students/me/qualifying-results', authenticate, requireRole('STUDENT'), asyncHandler(getMyQualifyingResults));
+router.post('/students/me/qualifying-results', authenticate, requireRole('STUDENT'), strictWriteLimiter, asyncHandler(submitMyQualifyingResult));
 
 router.get('/instructors/classes', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorClasses));
 router.get('/instructors/modules', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorModules));
@@ -85,6 +88,11 @@ router.post('/instructors/assessments', authenticate, requireRole('INSTRUCTOR'),
 router.patch('/instructors/assessments/:id', authenticate, requireRole('INSTRUCTOR'), strictWriteLimiter, asyncHandler(getCurrentInstructor), validateRequest(updateAssessmentSchema), asyncHandler(updateInstructorAssessment));
 router.delete('/instructors/assessments/:id', authenticate, requireRole('INSTRUCTOR'), strictWriteLimiter, asyncHandler(getCurrentInstructor), asyncHandler(removeInstructorAssessment));
 router.get('/instructors/classes/:classId/students', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(requireAssignedSection), asyncHandler(listInstructorClassStudents));
+router.get('/instructors/attendance-sessions', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorAttendanceSessions));
+router.post('/instructors/attendance-sessions', authenticate, requireRole('INSTRUCTOR'), strictWriteLimiter, asyncHandler(getCurrentInstructor), asyncHandler(upsertInstructorAttendanceSession));
+router.delete('/instructors/attendance-sessions/:id', authenticate, requireRole('INSTRUCTOR'), strictWriteLimiter, asyncHandler(getCurrentInstructor), asyncHandler(removeInstructorAttendanceSession));
+router.get('/instructors/attendance-records', authenticate, requireRole('INSTRUCTOR'), asyncHandler(getCurrentInstructor), asyncHandler(listInstructorAttendanceRecords));
+router.post('/instructors/attendance-records', authenticate, requireRole('INSTRUCTOR'), strictWriteLimiter, asyncHandler(getCurrentInstructor), asyncHandler(upsertInstructorAttendanceRecord));
 
 router.get('/coordinators/component/students', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorStudents));
 router.get('/coordinators/component/classes', authenticate, requireRole('COORDINATOR'), asyncHandler(getCurrentCoordinator), asyncHandler(listCoordinatorClasses));

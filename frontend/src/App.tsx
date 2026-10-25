@@ -17,7 +17,10 @@ const AnnouncementsCenter = React.lazy(() => import('./features/announcements/pa
 const ReportsCenter = React.lazy(() => import('./pages/ReportsPage'));
 const GradesPage = React.lazy(() => import('./pages/GradesPage'));
 const RoleDashboardHome = React.lazy(() => import('./features/dashboard/pages/RoleDashboardHome'));
+const StudentAttendanceView = React.lazy(() => import('./features/dashboard/components/StudentAttendanceView'));
 import CollapsibleRoleSidebar from './components/layout/CollapsibleRoleSidebar';
+import AppShell from './components/layout/AppShell';
+import PageHeader from './components/layout/PageHeader';
 import { safeJsonParse, loadModules, loadAssessments, loadAccounts, saveAccounts, loadQualifyingExamResults, loadStudents, initializeFromApi, syncAllFromApi, syncCollectionFromApi, retryPendingSyncs, setSessionUser, toNstpComponent, clearSessionSnapshots } from './data/nstpData';
 import type { NstpAccount } from './data/nstpData';
 import { connectSocket, disconnectSocket } from './services/socketClient';
@@ -27,7 +30,7 @@ import { toast, Toaster } from 'sonner';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/dialog';
 import SectionErrorBoundary from './components/common/SectionErrorBoundary';
 
-type ShellSection = 'overview' | 'modules' | 'assessments' | 'progress' | 'grades' | 'admin' | 'facilitator' | 'coordinator' | 'announcements' | 'reports';
+type ShellSection = 'overview' | 'modules' | 'assessments' | 'progress' | 'attendance' | 'grades' | 'admin' | 'facilitator' | 'coordinator' | 'announcements' | 'reports';
 type AccountUtility = 'profile' | 'settings' | 'security' | 'accessibility' | 'activity' | 'help';
 type AccountPreferences = {
   defaultLanding: ShellSection;
@@ -199,6 +202,7 @@ const NAV_ITEMS: Record<string, Array<{ id: ShellSection; label: string; icon: a
     { id: 'modules', label: 'Modules', icon: BookOpen },
     { id: 'assessments', label: 'Assessments', icon: ClipboardList },
     { id: 'progress', label: 'Progress', icon: TrendingUp },
+    { id: 'attendance', label: 'Attendance', icon: CalendarDays },
     { id: 'grades', label: 'Grades', icon: Award },
     { id: 'reports', label: 'Reports', icon: BarChart3 },
     { id: 'announcements', label: 'Announcements', icon: Bell },
@@ -232,7 +236,18 @@ export default function App() {
   // which workspace it is rendering before it can read role-specific fields.
   // `normalizeAuthenticatedUser` is the only writer, and it returns null rather
   // than an unclassifiable user, which is why `null` is the sole other state.
-  const [user, setUser] = useState<AuthenticatedUser | null>(null);
+  const [user, setUser] = useState<AuthenticatedUser | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const devSession = window.sessionStorage.getItem('nstp-dev-session');
+    if (devSession) {
+      try {
+        return normalizeAuthenticatedUser(JSON.parse(devSession));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  });
   const [activeSection, setActiveSection] = useState<ShellSection>('overview');
   const [themeMode, setThemeMode] = useState<'light' | 'dark'>(() => {
     const savedTheme = localStorage.getItem('nstp-theme') as 'light' | 'dark' | null;
@@ -324,8 +339,10 @@ export default function App() {
       } catch {
         // apiClient has already shown the appropriate error; do not strand the
         // visitor behind the boot splash when a session has expired.
-        setUser(null);
-        setSessionUser(null);
+        if (!window.sessionStorage.getItem('nstp-dev-session')) {
+          setUser(null);
+          setSessionUser(null);
+        }
       } finally {
         setDataReady(true);
       }
@@ -1056,6 +1073,7 @@ export default function App() {
     ...(user.role === 'student'
       ? [
         { label: 'Modules', keywords: ['module', 'modules', 'lesson', 'study', 'learning'], run: () => { setActiveSection('modules'); setHeaderHint('Opened Modules'); } },
+        { label: 'Attendance', keywords: ['attendance', 'session', 'check-in', 'present', 'absent'], run: () => { setActiveSection('attendance'); setHeaderHint('Opened Attendance'); } },
         { label: 'Grades', keywords: ['grade', 'grades', 'standing', 'score', 'completion'], run: () => { setActiveSection('grades'); setHeaderHint('Opened Grades'); } },
         { label: 'Progress', keywords: ['progress', 'classification', 'component', 'cwts', 'lts', 'mts'], run: () => { setActiveSection('progress'); setHeaderHint('Opened Progress'); } },
       ]
@@ -1141,6 +1159,7 @@ export default function App() {
     if (activeSection === 'modules') return <SectionErrorBoundary name="Modules"><ModulesPage user={user} role="student" onBack={goBackToOverview} /></SectionErrorBoundary>;
     if (activeSection === 'assessments') return <SectionErrorBoundary name="Assessments"><AssessmentsPage user={user} onBack={goBackToOverview} /></SectionErrorBoundary>;
     if (activeSection === 'progress') return <SectionErrorBoundary name="Progress"><ProgressTracker user={user} onBack={goBackToOverview} /></SectionErrorBoundary>;
+    if (activeSection === 'attendance') return <SectionErrorBoundary name="Attendance"><StudentAttendanceView user={user} onBack={goBackToOverview} /></SectionErrorBoundary>;
     if (activeSection === 'grades') return <SectionErrorBoundary name="Grades"><GradesPage user={user} /></SectionErrorBoundary>;
     if (activeSection === 'overview') {
       return <SectionErrorBoundary name="Dashboard Home"><RoleDashboardHome user={user} role="student" onNavigate={(target) => setActiveSection(target as ShellSection)} /></SectionErrorBoundary>;
@@ -1269,253 +1288,228 @@ export default function App() {
   return (
     <>
       <Toaster />
-      <div className="min-h-screen overflow-x-hidden bg-[#f4f8fd] text-slate-900 dark:bg-slate-950 dark:text-slate-100 lg:h-screen">
-        <div className="min-h-screen lg:h-screen">
-          <CollapsibleRoleSidebar
-            open={mobileSidebarOpen}
-            onClose={() => setMobileSidebarOpen(false)}
-            portalLabel="Student Portal"
-            closeLabel="Close student navigation"
-            groups={[
-              {
-                label: 'Navigation',
-                items: navItems.map((item) => ({
-                  label: item.label,
-                  icon: item.icon,
-                  active: activeSection === item.id,
-                  onClick: () => navigateToSection(item.id),
-                })),
-              },
-            ]}
-            avatarLabel={initials}
-            accountLabel="Student"
-            accountTitle={user.name}
-            accountSubtitle={user.email}
-            accountMeta={
-              <div className="flex items-center gap-2 text-xs text-white/75">
-                <CalendarDays className="h-4 w-4 text-[#E5B73B]" />
-                {today}
-              </div>
+      <AppShell
+        portalLabel="Student Portal"
+        sidebarOpen={mobileSidebarOpen}
+        onSidebarToggle={setMobileSidebarOpen}
+        avatarLabel={initials}
+        accountLabel="Student"
+        accountTitle={user.name}
+        accountSubtitle={user.email}
+        accountMeta={
+          <div className="flex items-center gap-2 text-xs text-white/75">
+            <CalendarDays className="h-4 w-4 text-[#E5B73B]" />
+            {today}
+          </div>
+        }
+        onLogout={handleLogout}
+        sidebarGroups={[
+          {
+            label: 'Navigation',
+            items: navItems.map((item) => ({
+              label: item.label,
+              icon: item.icon,
+              active: activeSection === item.id,
+              onClick: () => navigateToSection(item.id),
+            })),
+          },
+        ]}
+        header={
+          <PageHeader
+            eyebrow="Student Portal"
+            title={
+              activeSection === 'overview'
+                ? 'Dashboard'
+                : activeSection === 'modules'
+                  ? 'Modules'
+                  : activeSection === 'assessments'
+                    ? 'Assessments'
+                    : activeSection === 'progress'
+                      ? 'Progress'
+                      : activeSection === 'attendance'
+                        ? 'Attendance Log'
+                        : activeSection === 'grades'
+                          ? 'Grades'
+                        : activeSection === 'reports'
+                          ? 'Reports'
+                          : activeSection === 'announcements'
+                            ? 'Notice Center'
+                            : 'Student Portal'
             }
-            onLogout={handleLogout}
-          />
-
-          <main className="m-3 min-h-0 min-w-0 overflow-auto rounded-[2rem] border border-slate-200 bg-white/85 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none lg:ml-[76px]">
-            <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-5 py-5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
-              <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-                <div className="flex min-w-0 items-start gap-3">
+            onMenuClick={() => setMobileSidebarOpen(true)}
+            searchValue={headerSearch}
+            onSearchChange={setHeaderSearch}
+            onSearchSubmit={() => {}}
+            searchPlaceholder="Search"
+            hint={headerHint || undefined}
+            actionsSlot={
+              <>
+                <div className="relative" ref={workspaceMenuRef}>
                   <button
-                    onClick={() => setMobileSidebarOpen(true)}
-                    className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                    aria-label="Open menu"
+                    onClick={() => setWorkspaceMenuOpen((open) => !open)}
+                    className="inline-flex h-10 sm:h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 sm:px-4 text-xs sm:text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
                   >
-                    <Menu className="h-5 w-5" />
+                    Actions
+                    <ChevronDown className="h-3.5 w-3.5" />
                   </button>
-                  <div className="min-w-0">
-                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-blue-700 dark:text-blue-300">Student Portal</p>
-                    <h2 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white md:text-3xl">
-                      {activeSection === 'overview'
-                        ? 'Dashboard'
-                        : activeSection === 'modules'
-                          ? 'Modules'
-                          : activeSection === 'assessments'
-                            ? 'Assessments'
-                            : activeSection === 'progress'
-                              ? 'Progress'
-                              : activeSection === 'grades'
-                                ? 'Grades'
-                                : activeSection === 'reports'
-                                  ? 'Reports'
-                                  : activeSection === 'announcements'
-                                    ? 'Notice Center'
-                                    : 'Student Portal'}
-                    </h2>
-                  </div>
+
+                  {workspaceMenuOpen && (
+                    <div className="absolute left-0 sm:left-auto sm:right-0 z-30 mt-2 max-h-[min(30rem,calc(100dvh-5rem))] w-[min(18rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 sm:w-72">
+                      <div className="mb-1 px-2 py-1">
+                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Quick menu</p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{workspaceLabel}</p>
+                      </div>
+                      {workspaceActions.map((action) => (
+                        <button
+                          key={action.label}
+                          onClick={() => {
+                            setWorkspaceLabel(action.label);
+                            action.run();
+                          }}
+                          className="mb-1 w-full rounded-xl px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+                        >
+                          <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{action.label}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{action.detail}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                <div className="flex min-w-0 flex-wrap items-center gap-3 xl:justify-end">
-                  <div className="relative" ref={workspaceMenuRef}>
-                    <button
-                      onClick={() => setWorkspaceMenuOpen((open) => !open)}
-                      className="inline-flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                    >
-                      Actions
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
+                <button
+                  onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
+                  className="inline-flex h-10 sm:h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-xs sm:text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  aria-label="Toggle theme"
+                  title="Toggle theme"
+                >
+                  {themeMode === 'dark' ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
+                  <span className="hidden sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+                </button>
 
-                    {workspaceMenuOpen && (
-                      <div className="absolute left-0 z-30 mt-2 max-h-[min(30rem,calc(100dvh-5rem))] w-[min(18rem,calc(100vw-2rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900 sm:left-auto sm:right-0 sm:w-72">
-                        <div className="mb-1 px-2 py-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Quick menu</p>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">{workspaceLabel}</p>
-                        </div>
-                        {workspaceActions.map((action) => (
-                          <button
-                            key={action.label}
-                            onClick={() => {
-                              setWorkspaceLabel(action.label);
-                              action.run();
-                            }}
-                            className="mb-1 w-full rounded-xl px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
-                          >
-                            <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{action.label}</span>
-                            <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{action.detail}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                <button
+                  onClick={toggleFullscreen}
+                  className="hidden sm:inline-flex h-10 sm:h-11 w-10 sm:w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                  title="Toggle fullscreen"
+                  aria-label="Toggle fullscreen"
+                >
+                  <Maximize2 className="h-4 w-4" />
+                </button>
 
-                  <div className="relative order-last min-w-0 max-w-none basis-full sm:order-none sm:min-w-[180px] sm:max-w-[240px] sm:flex-1 xl:flex-none">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-                    <input
-                      type="text"
-                      placeholder="Search"
-                      value={headerSearch}
-                      onChange={(event) => setHeaderSearch(event.target.value)}
-                      onKeyDown={handleSearchKeyDown}
-                      className="h-12 w-full rounded-2xl border border-slate-200 bg-white py-2 pl-9 pr-3 text-sm text-slate-700 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
-                    />
-                  </div>
-
+                <div className="relative" ref={notificationsRef}>
                   <button
-                    onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
-                    className="inline-flex h-12 items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                    aria-label="Toggle theme"
-                    title="Toggle theme"
+                    onClick={() => setNotificationsOpen((open) => !open)}
+                    className="relative inline-flex h-10 sm:h-11 w-10 sm:w-11 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                    title="Open notifications"
+                    aria-label="Open notifications"
                   >
-                    {themeMode === 'dark' ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
-                    <span className="hidden sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+                    <Bell className="h-4 w-4" />
+                    {unreadNotificationCount > 0 && (
+                      <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
+                        {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
+                      </span>
+                    )}
                   </button>
 
-                  <button
-                    onClick={toggleFullscreen}
-                    className="hidden h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 sm:inline-flex"
-                    title="Toggle fullscreen"
-                    aria-label="Toggle fullscreen"
-                  >
-                    <Maximize2 className="h-4 w-4" />
-                  </button>
-
-                  <div className="relative" ref={notificationsRef}>
-                    <button
-                      onClick={() => setNotificationsOpen((open) => !open)}
-                      className="relative inline-flex h-12 w-12 items-center justify-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                      title="Open notifications"
-                      aria-label="Open notifications"
-                    >
-                      <Bell className="h-4 w-4" />
-                      {unreadNotificationCount > 0 && (
-                        <span className="absolute -right-1 -top-1 inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">
-                          {unreadNotificationCount > 9 ? '9+' : unreadNotificationCount}
-                        </span>
-                      )}
-                    </button>
-
-                    {notificationsOpen && (
-                      <div className="absolute right-0 z-30 mt-2 max-h-[min(34rem,calc(100dvh-5rem))] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                        <div className="mb-2 flex items-center justify-between px-2 py-1">
-                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Notifications</p>
-                          <button
-                            onClick={() => {
-                              setActiveSection('announcements');
-                              setNotificationsOpen(false);
-                            }}
-                            className="rounded-lg px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-500/10"
-                          >
-                            Notice Center
-                          </button>
-                        </div>
-
-                        <div className="max-h-72 space-y-1 overflow-auto pr-1">
-                          {visibleNotifications.length === 0 && (
-                            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
-                              No notifications yet.
-                            </div>
-                          )}
-                          {visibleNotifications.slice(0, 6).map((notice) => {
-                            const unread = !readNoticeIds.includes(notice.id);
-                            return (
-                              <button
-                                key={notice.id}
-                                onClick={() => markNotificationRead(notice.id)}
-                                className={`w-full rounded-xl border px-3 py-2.5 text-left ${unread ? 'border-blue-200 bg-blue-50/60 dark:border-blue-500/30 dark:bg-blue-500/10' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950'}`}
-                              >
-                                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{notice.title}</p>
-                                <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 line-clamp-2">{notice.message}</p>
-                                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{new Date(notice.createdAt).toLocaleString()}</p>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="relative" ref={profileMenuRef}>
-                    <button
-                      onClick={() => setProfileMenuOpen((open) => !open)}
-                      className="inline-flex h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
-                      title="Profile menu"
-                      aria-label="Profile menu"
-                    >
-                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-blue-700 text-xs font-semibold text-white">{initials}</span>
-                      <span className="hidden max-w-[120px] truncate text-xs md:inline">{user.name}</span>
-                      <ChevronDown className="h-3.5 w-3.5" />
-                    </button>
-
-                    {profileMenuOpen && (
-                      <div className="absolute right-0 z-30 mt-2 max-h-[min(30rem,calc(100dvh-5rem))] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
-                        <div className="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800">
-                          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Signed In</p>
-                          <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{user.name}</p>
-                          <p className="text-xs text-slate-600 dark:text-slate-300">{user.email}</p>
-                        </div>
-                        <div className="mt-2 space-y-1">
-                          {accountUtilities.map((action) => {
-                            const Icon = action.icon;
-                            return (
-                              <button
-                                key={action.id}
-                                onClick={() => openAccountUtility(action.id)}
-                                className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
-                              >
-                                <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
-                                  <Icon className="h-4 w-4" />
-                                </span>
-                                <span>
-                                  <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{action.label}</span>
-                                  <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{action.detail}</span>
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div className="my-2 h-px bg-slate-200 dark:bg-slate-800" />
+                  {notificationsOpen && (
+                    <div className="absolute right-0 z-30 mt-2 max-h-[min(34rem,calc(100dvh-5rem))] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                      <div className="mb-2 flex items-center justify-between px-2 py-1">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Notifications</p>
                         <button
-                          type="button"
-                          onClick={handleLogout}
-                          className="mt-1 flex w-full items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-semibold text-rose-700 shadow-sm hover:bg-rose-100 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+                          onClick={() => {
+                            setActiveSection('announcements');
+                            setNotificationsOpen(false);
+                          }}
+                          className="rounded-lg px-2 py-1 text-xs font-semibold text-blue-700 hover:bg-blue-50 dark:text-blue-300 dark:hover:bg-blue-500/10"
                         >
-                          <LogOut className="h-4 w-4" />
-                          Logout
+                          Notice Center
                         </button>
                       </div>
-                    )}
-                  </div>
-                </div>
-              </div>
-              {headerHint && <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{headerHint}</p>}
-            </div>
 
-            <div className="p-3 md:p-4">
-              <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-600" role="status">Loading workspace…</div>}>
-                {renderSection()}
-              </React.Suspense>
-            </div>
-          </main>
-        </div>
-      </div>
+                      <div className="max-h-72 space-y-1 overflow-auto pr-1">
+                        {visibleNotifications.length === 0 && (
+                          <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-300">
+                            No notifications yet.
+                          </div>
+                        )}
+                        {visibleNotifications.slice(0, 6).map((notice) => {
+                          const unread = !readNoticeIds.includes(notice.id);
+                          return (
+                            <button
+                              key={notice.id}
+                              onClick={() => markNotificationRead(notice.id)}
+                              className={`w-full rounded-xl border px-3 py-2.5 text-left ${unread ? 'border-blue-200 bg-blue-50/60 dark:border-blue-500/30 dark:bg-blue-500/10' : 'border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-950'}`}
+                            >
+                              <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{notice.title}</p>
+                              <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 line-clamp-2">{notice.message}</p>
+                              <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">{new Date(notice.createdAt).toLocaleString()}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="relative" ref={profileMenuRef}>
+                  <button
+                    onClick={() => setProfileMenuOpen((open) => !open)}
+                    className="inline-flex h-10 sm:h-11 items-center gap-2 rounded-xl border border-slate-200 bg-white px-2.5 sm:px-3 text-xs sm:text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                    title="Profile menu"
+                    aria-label="Profile menu"
+                  >
+                    <span className="inline-flex h-7 w-7 sm:h-8 sm:w-8 items-center justify-center rounded-full bg-blue-700 text-xs font-semibold text-white">{initials}</span>
+                    <span className="hidden max-w-[120px] truncate md:inline">{user.name}</span>
+                    <ChevronDown className="h-3.5 w-3.5" />
+                  </button>
+
+                  {profileMenuOpen && (
+                    <div className="absolute right-0 z-30 mt-2 max-h-[min(30rem,calc(100dvh-5rem))] w-[min(20rem,calc(100vw-1rem))] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                      <div className="rounded-xl bg-slate-50 px-3 py-2 dark:bg-slate-800">
+                        <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">Signed In</p>
+                        <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">{user.name}</p>
+                        <p className="text-xs text-slate-600 dark:text-slate-300">{user.email}</p>
+                      </div>
+                      <div className="mt-2 space-y-1">
+                        {accountUtilities.map((action) => {
+                          const Icon = action.icon;
+                          return (
+                            <button
+                              key={action.id}
+                              onClick={() => openAccountUtility(action.id)}
+                              className="flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left hover:bg-slate-100 dark:hover:bg-slate-800"
+                            >
+                              <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300">
+                                <Icon className="h-4 w-4" />
+                              </span>
+                              <span>
+                                <span className="block text-sm font-semibold text-slate-800 dark:text-slate-100">{action.label}</span>
+                                <span className="mt-0.5 block text-xs text-slate-500 dark:text-slate-400">{action.detail}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="my-2 h-px bg-slate-200 dark:bg-slate-800" />
+                      <button
+                        type="button"
+                        onClick={handleLogout}
+                        className="mt-1 flex w-full items-center gap-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-left text-sm font-semibold text-rose-700 shadow-sm hover:bg-rose-100 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        Logout
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </>
+            }
+          />
+        }
+      >
+        <React.Suspense fallback={<div className="p-8 text-center text-sm text-slate-600" role="status">Loading workspace…</div>}>
+          {renderSection()}
+        </React.Suspense>
+      </AppShell>
       {accountUtility && selectedAccountUtility && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-slate-950/55 p-3 backdrop-blur-sm md:p-6">
           <div className="max-h-[92dvh] w-full max-w-3xl overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">

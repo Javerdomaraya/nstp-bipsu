@@ -436,13 +436,19 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     }
   };
 
-  const rejectRegistration = (registrationId: string) => {
+  const rejectRegistration = async (registrationId: string) => {
     const shouldReject = window.confirm('Reject this student registration request?');
     if (!shouldReject) return;
     const registration = pendingRegistrations.find((item) => item.id === registrationId);
-    persistPendingRegistrations(pendingRegistrations.filter((item) => item.id !== registrationId));
-    if (registration) {
-      logAudit('Rejected registration', `${registration.name} (${registration.email})`);
+    try {
+      await apiDel(`/nstp/admin/pending-registrations/${registrationId}`, null);
+      persistPendingRegistrations(pendingRegistrations.filter((item) => item.id !== registrationId));
+      if (registration) {
+        logAudit('Rejected registration', `${registration.name} (${registration.email})`);
+      }
+      toast.success('Registration request rejected.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to reject registration on server.');
     }
   };
 
@@ -484,11 +490,16 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   };
 
   const deleteStudent = async (studentId: string) => {
-    await apiDel(`/nstp/admin/students/${studentId}`, null);
-    const nextStudents = students.filter((student) => student.id !== studentId);
-    persistStudents(nextStudents);
-    if (editingStudentId === studentId) {
-      cancelStudentEdit();
+    try {
+      await apiDel(`/nstp/admin/students/${studentId}`, null);
+      const nextStudents = students.filter((student) => student.id !== studentId);
+      persistStudents(nextStudents);
+      if (editingStudentId === studentId) {
+        cancelStudentEdit();
+      }
+      toast.success('Student record deleted.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to delete student record.');
     }
   };
 
@@ -1932,60 +1943,99 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
             />
           )}
 
-          <main className={`min-w-0 overflow-auto rounded-[2rem] border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none ${embedded ? '' : 'm-3 lg:ml-[76px]'}`}>
-            <header className="relative flex flex-col gap-4 border-b border-slate-200 px-5 py-5 dark:border-slate-800 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex min-w-0 items-start gap-3">
-                {!embedded && (
-                  <button
-                    type="button"
-                    onClick={() => setAdminMobileSidebarOpen(true)}
-                    className="mt-1 grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 lg:hidden"
-                    aria-label="Open admin navigation"
-                  >
-                    <Menu className="h-5 w-5" />
+          <main className={`min-w-0 overflow-auto rounded-2xl sm:rounded-[2rem] border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none ${embedded ? '' : 'm-2 sm:m-3 lg:ml-[76px]'}`}>
+            <header className="relative flex flex-col gap-3 border-b border-slate-200 p-3.5 sm:p-5 dark:border-slate-800 lg:flex-row lg:items-center lg:justify-between">
+              {/* Row 1 on mobile, Left side on desktop */}
+              <div className="flex min-w-0 items-center justify-between gap-2.5 sm:gap-3">
+                <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                  {!embedded && (
+                    <button
+                      type="button"
+                      onClick={() => setAdminMobileSidebarOpen(true)}
+                      className="grid h-9 w-9 sm:h-10 sm:w-10 shrink-0 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 lg:hidden"
+                      aria-label="Open admin navigation"
+                    >
+                      <Menu className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </button>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Administration</p>
+                    <h1 className="truncate text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight text-slate-950 dark:text-white">
+                      {view === 'enrollment' ? 'Student Approvals' :
+                       view === 'coordinators' ? 'Coordinators' :
+                       view === 'facilitators' ? 'Facilitators' :
+                       view === 'municipalities' ? 'Municipalities' :
+                       view === 'students' ? 'Student Roster' :
+                       view === 'modules' ? 'Module Library' :
+                       view === 'assessments' ? 'Assessment Bank' :
+                       view === 'assignments' ? 'Semester Grades' :
+                       view === 'tools' ? 'Reports & Analytics' :
+                       view === 'exports' ? 'Student Profile Layout' :
+                       view === 'account' ? 'Account Settings' :
+                       view === 'settings' ? 'System Settings' :
+                       'Dashboard'}
+                    </h1>
+                  </div>
+                </div>
+
+                {/* Mobile top utility icons */}
+                <div className="flex shrink-0 items-center gap-1.5 sm:hidden">
+                  <button onClick={setTheme} className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" title="Toggle theme">
+                    <SunMedium className="h-4 w-4" />
                   </button>
-                )}
-                <div className="min-w-0">
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-700 dark:text-blue-300">Administration</p>
-                  <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-3xl">
-                    {view === 'assignments' ? 'Semester Grades' : view === 'exports' ? 'Export Layout' : view === 'settings' ? 'System Settings' : view === 'account' ? 'Account Settings' : 'Dashboard'}
-                  </h1>
+                  <button onClick={() => setNotificationsOpen((open) => !open)} className="relative grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" title="Notifications">
+                    <Bell className="h-4 w-4" />
+                    {pendingRegistrations.length ? <span className="absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full bg-rose-500 text-[10px] font-semibold text-white">{pendingRegistrations.length}</span> : null}
+                  </button>
+                  <button onClick={() => setProfileOpen((open) => !open)} className="flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                    <span className="grid h-6 w-6 place-items-center rounded-full bg-blue-700 text-xs font-semibold text-white">{adminInitials}</span>
+                    <ChevronDown className="h-3 w-3 text-slate-400" />
+                  </button>
                 </div>
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
-                <select value={schoolYear} onChange={(event) => setSchoolYear(event.target.value)} className="min-h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 shadow-sm outline-none hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+
+              {/* Row 2 on mobile: Search + School Year + Desktop Utilities */}
+              <div className="flex min-w-0 items-center gap-2 sm:gap-3 lg:justify-end">
+                <label className="flex h-9 sm:h-12 min-w-0 flex-1 items-center gap-2 sm:gap-2.5 rounded-xl sm:rounded-2xl border border-slate-200 bg-white px-2.5 sm:px-4 text-xs sm:text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 lg:w-64 xl:w-72">
+                  <Search className="h-4 w-4 shrink-0 text-slate-400" />
+                  <input value={adminSearch} onChange={(event) => setAdminSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && runAdminSearch()} placeholder="Search anything..." className="w-full min-w-0 bg-transparent text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
+                </label>
+
+                <select value={schoolYear} onChange={(event) => setSchoolYear(event.target.value)} className="h-9 sm:h-12 shrink-0 rounded-xl sm:rounded-2xl border border-slate-200 bg-white px-2.5 sm:px-4 text-xs sm:text-sm font-medium text-slate-700 shadow-sm outline-none hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
                   {SCHOOL_YEARS.map((year) => <option key={year}>{year}</option>)}
                 </select>
-                <label className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 sm:min-w-[16rem] xl:w-[24rem]">
-                  <Search className="h-4 w-4 text-slate-400" />
-                  <input value={adminSearch} onChange={(event) => setAdminSearch(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && runAdminSearch()} placeholder="Search anything..." className="w-full bg-transparent text-slate-900 outline-none placeholder:text-slate-400 dark:text-slate-100" />
-                </label>
-                <button onClick={setTheme} className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" title="Toggle theme">
-                  <SunMedium className="h-5 w-5" />
-                </button>
-                <button onClick={() => setNotificationsOpen((open) => !open)} className="relative grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  <Bell className="h-5 w-5" />
-                  {pendingRegistrations.length ? <span className="absolute -right-1 -top-1 grid h-6 w-6 place-items-center rounded-full bg-rose-500 text-xs font-semibold text-white">{pendingRegistrations.length}</span> : null}
-                </button>
-                <button onClick={() => setProfileOpen((open) => !open)} className="flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                  <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-700 text-sm font-semibold text-white">{adminInitials}</span>
-                  <span className="hidden text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">{adminDisplayName}</span>
-                  <ChevronDown className="h-4 w-4 text-slate-400" />
-                </button>
+
+                {/* Tablet & Desktop utility buttons */}
+                <div className="hidden sm:flex shrink-0 items-center gap-2">
+                  <button onClick={setTheme} className="grid h-10 w-10 sm:h-12 sm:w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200" title="Toggle theme">
+                    <SunMedium className="h-4 w-4 sm:h-5 sm:w-5" />
+                  </button>
+                  <button onClick={() => setNotificationsOpen((open) => !open)} className="relative grid h-10 w-10 sm:h-12 sm:w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                    <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
+                    {pendingRegistrations.length ? <span className="absolute -right-1 -top-1 grid h-5 w-5 sm:h-6 sm:w-6 place-items-center rounded-full bg-rose-500 text-[10px] sm:text-xs font-semibold text-white">{pendingRegistrations.length}</span> : null}
+                  </button>
+                  <button onClick={() => setProfileOpen((open) => !open)} className="flex h-10 sm:min-h-12 items-center gap-2 sm:gap-3 rounded-2xl border border-slate-200 bg-white px-2.5 sm:px-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                    <span className="grid h-7 w-7 sm:h-9 sm:w-9 place-items-center rounded-full bg-blue-700 text-xs sm:text-sm font-semibold text-white">{adminInitials}</span>
+                    <span className="hidden text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">{adminDisplayName}</span>
+                    <ChevronDown className="h-4 w-4 text-slate-400" />
+                  </button>
+                </div>
               </div>
+
+              {/* Anchored Dropdown Menu */}
               {(notificationsOpen || profileOpen) && (
-                <div className="absolute right-5 top-24 z-30 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-3 shadow-xl dark:border-slate-700 dark:bg-slate-950">
+                <div className="absolute right-3 top-14 sm:right-5 sm:top-24 z-50 w-[min(22rem,calc(100vw-2rem))] rounded-2xl border border-slate-200 bg-white p-3 shadow-2xl dark:border-slate-700 dark:bg-slate-950">
                   {notificationsOpen ? (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">Notifications</p>
-                      <button onClick={() => setView('enrollment')} className="mt-3 w-full rounded-xl bg-blue-50 p-3 text-left text-sm text-slate-800 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-slate-100">Review {pendingRegistrations.length} enrollment request{pendingRegistrations.length === 1 ? '' : 's'}</button>
-                      <button onClick={() => setView('tools')} className="mt-2 w-full rounded-xl bg-slate-50 p-3 text-left text-sm text-slate-800 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-100">Generate monthly analytics snapshot</button>
+                      <button onClick={() => { setNotificationsOpen(false); setView('enrollment'); }} className="mt-3 w-full rounded-xl bg-blue-50 p-3 text-left text-sm text-slate-800 hover:bg-blue-100 dark:bg-blue-500/10 dark:text-slate-100">Review {pendingRegistrations.length} enrollment request{pendingRegistrations.length === 1 ? '' : 's'}</button>
+                      <button onClick={() => { setNotificationsOpen(false); setView('tools'); }} className="mt-2 w-full rounded-xl bg-slate-50 p-3 text-left text-sm text-slate-800 hover:bg-slate-100 dark:bg-slate-900 dark:text-slate-100">Generate monthly analytics snapshot</button>
                     </div>
                   ) : (
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">Signed in</p>
                       <p className="mt-2 font-semibold text-slate-950 dark:text-white">Dr. Reynold G. Bustillo</p>
-                      <button onClick={() => setView('settings')} className="mt-3 w-full rounded-xl bg-blue-50 p-3 text-left text-sm font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">System Settings</button>
+                      <button onClick={() => { setProfileOpen(false); setView('settings'); }} className="mt-3 w-full rounded-xl bg-blue-50 p-3 text-left text-sm font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">System Settings</button>
                       <button onClick={onLogout} className="mt-2 w-full rounded-xl bg-rose-50 p-3 text-left text-sm font-semibold text-rose-700 dark:bg-rose-500/10 dark:text-rose-200">Logout</button>
                     </div>
                   )}
@@ -1993,7 +2043,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
               )}
             </header>
 
-            <div className={`grid gap-5 p-5 ${['exports', 'municipalities', 'facilitators'].includes(view) ? 'xl:grid-cols-1' : 'xl:grid-cols-[minmax(0,1fr)_14rem]'}`}>
+            <div className={`grid gap-4 sm:gap-5 p-3.5 sm:p-5 ${view === 'overview' ? 'xl:grid-cols-[minmax(0,1fr)_15rem]' : 'xl:grid-cols-1'}`}>
               <div className="min-w-0 space-y-5">
                 {view === 'enrollment' ? (
                   <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
@@ -2134,16 +2184,16 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                       </select>
                     </div>
 
-                    <div className="overflow-visible rounded-2xl border border-slate-200 dark:border-slate-800">
-                      <table className="w-full table-fixed text-sm">
+                    <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                      <table className="min-w-[800px] w-full text-sm">
                         <colgroup>
-                          <col className="w-[21%]" />
-                          <col className="w-[11%]" />
+                          <col className="w-[22%]" />
                           <col className="w-[12%]" />
-                          <col className="w-[14%]" />
+                          <col className="w-[13%]" />
+                          <col className="w-[15%]" />
                           <col className="w-[12%]" />
                           <col className="w-[10%]" />
-                          <col className="w-[20%]" />
+                          <col className="w-[16%]" />
                         </colgroup>
                         <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
                           <tr>
@@ -2359,8 +2409,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                           </button>
                         </div>
 
-                        <div className="overflow-visible rounded-2xl border border-slate-200 dark:border-slate-800">
-                          <table className="w-full table-fixed text-sm">
+                        <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                          <table className="min-w-[700px] w-full text-sm">
                             <colgroup>
                               <col className="w-[25%]" />
                               <col className="w-[14%]" />
@@ -2978,28 +3028,28 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                   </section>
                 ) : (
                 <>
-                <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+                <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
                   {[
                     { label: 'Total Students', value: totalStudents.toLocaleString(), detail: 'Enrolled students', icon: Users, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200' },
                     { label: 'Coordinators', value: coordinatorAccounts.length, detail: 'Component coordinators', icon: UserCog, tone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-200' },
                     { label: 'Facilitators', value: facilitatorAccounts.length, detail: 'Active facilitators', icon: Users, tone: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-200' },
                     { label: 'Municipalities', value: BILIRAN_MUNICIPALITIES.length, detail: 'With assigned facilitators', icon: Building2, tone: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200' },
                     { label: 'Student Approvals', value: pendingRegistrations.length, detail: 'Pending approval', icon: UserCheck, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200' },
-                  ].map((stat) => {
+                  ].map((stat, idx) => {
                     const Icon = stat.icon;
                     return (
-                      <article key={stat.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                        <div className="flex items-start gap-4">
-                          <span className={`grid h-14 w-14 shrink-0 place-items-center rounded-2xl ${stat.tone}`}>
-                            <Icon className="h-7 w-7" />
+                      <article key={stat.label} className={`rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}>
+                        <div className="flex items-start gap-3 sm:gap-4">
+                          <span className={`grid h-10 w-10 sm:h-12 sm:w-12 shrink-0 place-items-center rounded-xl sm:rounded-2xl ${stat.tone}`}>
+                            <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                           </span>
                           <div className="min-w-0">
-                            <p className="text-sm font-medium text-slate-700 dark:text-slate-200">{stat.label}</p>
-                            <p className="mt-1 text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
-                            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{stat.detail}</p>
+                            <p className="text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200 truncate">{stat.label}</p>
+                            <p className="mt-0.5 sm:mt-1 text-2xl sm:text-3xl font-semibold tracking-tight text-slate-950 dark:text-white">{stat.value}</p>
+                            <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-slate-400 sm:block">{stat.detail}</p>
                           </div>
                         </div>
-                        <div className="mt-4 h-8 min-w-0">
+                        <div className="mt-2.5 sm:mt-4 h-6 sm:h-8 min-w-0">
                           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                             <LineChart data={sparklineData}>
                               <Line type="monotone" dataKey="progress" stroke="#2563eb" strokeWidth={2} dot={false} />
@@ -3009,6 +3059,33 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                       </article>
                     );
                   })}
+                </section>
+
+                {/* Mobile-elevated Quick Actions */}
+                <section className="block xl:hidden rounded-2xl border border-blue-200 bg-white p-3.5 shadow-sm dark:border-blue-500/20 dark:bg-slate-950">
+                  <div className="mb-2.5 flex items-center justify-between">
+                    <h2 className="text-sm font-semibold text-slate-950 dark:text-white">Quick Actions</h2>
+                    <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">Jump</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                    {[
+                      { label: 'Create Coordinator', detail: 'Add new component coordinator', icon: UserCog, action: () => setView('coordinators') },
+                      { label: 'Assign Municipalities', detail: 'Manage facilitator assignments', icon: Users, action: () => openQuickAction('municipality') },
+                      { label: 'Student Approvals', detail: 'Review pending requests', icon: ClipboardList, action: () => openQuickAction('enrollment'), badge: pendingRegistrations.length },
+                      { label: 'Generate Reports', detail: 'Download system reports', icon: FileDown, action: () => openQuickAction('reports') },
+                    ].map((action) => {
+                      const Icon = action.icon;
+                      return (
+                        <button key={action.label} onClick={action.action} className="relative flex flex-col items-center justify-center rounded-xl border border-blue-100 bg-blue-50/70 p-2.5 text-center text-blue-950 transition hover:border-blue-300 hover:bg-blue-100 active:scale-[0.98] dark:border-blue-500/20 dark:bg-blue-500/10 dark:text-blue-100">
+                          <span className="grid h-9 w-9 place-items-center rounded-xl bg-white text-blue-700 shadow-sm dark:bg-slate-900 dark:text-blue-200">
+                            <Icon className="h-4 w-4" />
+                          </span>
+                          <span className="mt-1.5 block text-xs font-semibold leading-tight">{action.label}</span>
+                          {action.badge ? <span className="absolute right-1.5 top-1.5 rounded-full bg-blue-700 px-1.5 py-0.2 text-[9px] font-semibold text-white">{action.badge}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </section>
 
                 <section className="grid gap-5 xl:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
@@ -3077,12 +3154,61 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                   </article>
                 </section>
 
-                <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                   <div className="mb-4 flex items-center justify-between gap-3">
-                    <h2 className="text-lg font-semibold text-slate-950 dark:text-white">Pending Student Approvals</h2>
-                    <button onClick={() => setView('enrollment')} className="text-sm font-medium text-blue-700 dark:text-blue-300">View all requests</button>
+                    <h2 className="text-base sm:text-lg font-semibold text-slate-950 dark:text-white">Pending Student Approvals</h2>
+                    <button onClick={() => setView('enrollment')} className="text-xs sm:text-sm font-medium text-blue-700 dark:text-blue-300">View all requests</button>
                   </div>
-                  <div className="overflow-x-auto">
+
+                  {/* Mobile Card List (under 768px) */}
+                  <div className="space-y-3 md:hidden">
+                    {pendingRegistrations.slice(0, 5).map((registration) => {
+                      const isApproving = approvingRegistrationIds.includes(registration.id);
+                      const approvalError = registrationApprovalErrors[registration.id];
+                      return (
+                        <div key={registration.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+                          <div className="flex items-start justify-between gap-2">
+                            <div>
+                              <p className="font-semibold text-slate-950 dark:text-white text-sm">{registration.name}</p>
+                              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{registration.degreeProgram || 'No program specified'}</p>
+                            </div>
+                            <span className="rounded-md bg-blue-100/80 px-2 py-0.5 text-[10px] font-semibold text-blue-800 dark:bg-blue-500/20 dark:text-blue-300">
+                              {registration.municipality || 'Naval'}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
+                            <span>{new Date(registration.createdAt).toLocaleDateString()}</span>
+                            <span>Facilitator - {registration.municipality || 'Naval'}</span>
+                          </div>
+                          <div className="mt-3 flex items-center gap-2 border-t border-slate-200/80 pt-2.5 dark:border-slate-700/80">
+                            <button
+                              disabled={isApproving}
+                              onClick={() => approveRegistration(registration)}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500 disabled:opacity-60"
+                            >
+                              {isApproving ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Check className="h-3.5 w-3.5" aria-hidden="true" />}
+                              <span>Approve</span>
+                            </button>
+                            <button
+                              disabled={isApproving}
+                              onClick={() => rejectRegistration(registration.id)}
+                              className="flex-1 inline-flex items-center justify-center gap-1.5 rounded-lg border border-rose-300 bg-white px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 disabled:opacity-60 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-300"
+                            >
+                              <X className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>Reject</span>
+                            </button>
+                          </div>
+                          {approvalError && <p role="alert" className="mt-2 text-xs font-medium text-rose-700 dark:text-rose-300">{approvalError}</p>}
+                        </div>
+                      );
+                    })}
+                    {pendingRegistrations.length === 0 && (
+                      <p className="py-4 text-center text-xs text-slate-500 dark:text-slate-400">No pending student approvals.</p>
+                    )}
+                  </div>
+
+                  {/* Desktop Table (md and up) */}
+                  <div className="hidden md:block overflow-x-auto">
                     <table className="w-full min-w-[820px] text-sm">
                       <thead>
                         <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
@@ -3125,9 +3251,9 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                 )}
               </div>
 
-              {!['exports', 'municipalities', 'facilitators'].includes(view) && (
+              {view === 'overview' && (
               <aside className="space-y-5">
-                <section className="rounded-2xl border border-blue-200 bg-white p-3 shadow-sm dark:border-blue-500/20 dark:bg-slate-950">
+                <section className="hidden xl:block rounded-2xl border border-blue-200 bg-white p-3 shadow-sm dark:border-blue-500/20 dark:bg-slate-950">
                   <div className="mb-3 flex items-center justify-between">
                     <h2 className="text-sm font-semibold text-slate-950 dark:text-white">Quick Actions</h2>
                     <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.12em] text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">Jump</span>

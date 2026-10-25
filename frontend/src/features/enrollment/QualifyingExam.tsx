@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react';
 import { FileText, Clock, AlertCircle, Award, LogOut } from 'lucide-react';
 import { autoAssignQualifyingResult, loadQualifyingExamResults, saveQualifyingExamResults, syncStudentAccessFromQualifyingResult, NstpComponent, QualifyingExamResult } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
+import { apiPost } from '../../services/apiClient';
+import { toast } from 'sonner';
 
 const EXAM_QUESTIONS = [
   {
@@ -145,8 +147,11 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     saveQualifyingExamResults(updatedResults);
     syncStudentAccessFromQualifyingResult(assignedResult);
 
-    // Save to user's record
+    // Save to user's record locally and persist to server
     localStorage.setItem(`examResult-${user.id}`, JSON.stringify(assignedResult));
+    apiPost('/nstp/students/me/qualifying-results', assignedResult)
+      .then(() => toast.success('Exam result synced with server.'))
+      .catch((err) => console.warn('Could not sync exam result to server:', err));
   };
 
   if (submitted) {

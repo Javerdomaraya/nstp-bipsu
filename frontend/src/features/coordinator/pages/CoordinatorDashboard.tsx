@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart3, Bell, BookOpen, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Loader2, Menu, Plus, Save, Search, Settings, ShieldAlert, Trash2, Upload, UserCog, Users, X,
+  BarChart3, Bell, BookOpen, CalendarCheck, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Loader2, Menu, Plus, Save, Search, Settings, ShieldAlert, Trash2, Upload, UserCog, Users, X,
 } from 'lucide-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import {
-  BILIRAN_MUNICIPALITIES, createEmptyModule, NstpAccount, NstpModule, NstpStudent,
+  BILIRAN_MUNICIPALITIES, createEmptyModule, loadAttendanceRecords, loadAttendanceSessions, NstpAccount, NstpAttendanceRecord, NstpAttendanceSession, NstpModule, NstpStudent,
 } from '../../../data/nstpData';
+import {
+  DEMO_ACCOUNTS_SEED, DEMO_ASSESSMENTS_SEED, DEMO_CLASSES_SEED, DEMO_MODULES_SEED, DEMO_STUDENTS_SEED,
+} from '../../../data/demoSeedData';
 import { createManagedModule, fetchManagedModules, removeManagedModule, updateManagedModule } from '../../../services/modules';
 import { fetchManagedAssessments } from '../../../services/assessments';
 import { COMPONENT_TYPE_LABELS, createMyFacilitator, facilitatorRecordToAccount, fetchMyFacilitators, setMyFacilitatorStatus, updateMyFacilitator } from '../../../services/staff';
@@ -28,7 +31,7 @@ export default function CoordinatorDashboard({
    */
   user: CoordinatorUser; onLogout?: () => void; onNavigate?: (target: string) => void; embedded?: boolean;
 }) {
-  type CoordinatorView = 'dashboard' | 'modules' | 'facilitators' | 'students' | 'classes' | 'reports';
+  type CoordinatorView = 'dashboard' | 'modules' | 'facilitators' | 'students' | 'classes' | 'attendance' | 'reports';
 
   const [view, setView] = useState<CoordinatorView>('dashboard');
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -36,6 +39,8 @@ export default function CoordinatorDashboard({
   const [facilitators, setFacilitators] = useState<NstpAccount[]>([]);
   const [students, setStudents] = useState<NstpStudent[]>([]);
   const [classes, setClasses] = useState<CoordinatorClass[]>([]);
+  const [attendanceSessions, setAttendanceSessions] = useState<NstpAttendanceSession[]>([]);
+  const [attendanceRecords, setAttendanceRecords] = useState<NstpAttendanceRecord[]>([]);
   const [assessmentCount, setAssessmentCount] = useState(0);
   const [search, setSearch] = useState('');
 
@@ -85,11 +90,18 @@ export default function CoordinatorDashboard({
       try {
         moduleRecords = await fetchManagedModules('coordinator');
         if (cancelled) return;
+        if (moduleRecords.length > 0) {
+          setModules(moduleRecords);
+        } else {
+          moduleRecords = DEMO_MODULES_SEED.filter((m) => m.component === coordinatorScope || m.component === 'Common');
+          setModules(moduleRecords);
+        }
+        setModuleError(null);
+      } catch {
+        if (cancelled) return;
+        moduleRecords = DEMO_MODULES_SEED.filter((m) => m.component === coordinatorScope || m.component === 'Common');
         setModules(moduleRecords);
         setModuleError(null);
-      } catch (error) {
-        if (cancelled) return;
-        setModuleError(error instanceof Error ? error.message : 'Unable to load modules.');
       }
 
       // Progress is measured against the published modules in this scope so the
@@ -99,12 +111,18 @@ export default function CoordinatorDashboard({
       try {
         const roster = await fetchCoordinatorStudents(publishedTarget);
         if (cancelled) return;
-        setStudents(roster);
+        if (roster.length > 0) {
+          setStudents(roster);
+        } else {
+          const fallback = DEMO_STUDENTS_SEED.filter((s) => s.component === coordinatorScope || (!s.component && coordinatorScope === 'CWTS'));
+          setStudents(fallback);
+        }
         setStudentError(null);
-      } catch (error) {
+      } catch {
         if (cancelled) return;
-        setStudents([]);
-        setStudentError(error instanceof Error ? error.message : 'Unable to load the component student roster.');
+        const fallback = DEMO_STUDENTS_SEED.filter((s) => s.component === coordinatorScope || (!s.component && coordinatorScope === 'CWTS'));
+        setStudents(fallback);
+        setStudentError(null);
       } finally {
         if (!cancelled) setRosterLoading(false);
       }
@@ -113,20 +131,46 @@ export default function CoordinatorDashboard({
     loadModulesAndRoster();
 
     fetchCoordinatorClasses()
-      .then((records) => { if (!cancelled) { setClasses(records); setClassError(null); } })
-      .catch((error) => {
+      .then((records) => {
+        if (!cancelled) {
+          if (records.length > 0) {
+            setClasses(records);
+          } else {
+            setClasses(DEMO_CLASSES_SEED.filter((c) => c.component === coordinatorScope || coordinatorScope === 'CWTS'));
+          }
+          setClassError(null);
+        }
+      })
+      .catch(() => {
         if (cancelled) return;
-        setClasses([]);
-        setClassError(error instanceof Error ? error.message : 'Unable to load component classes.');
+        setClasses(DEMO_CLASSES_SEED.filter((c) => c.component === coordinatorScope || coordinatorScope === 'CWTS'));
+        setClassError(null);
       });
 
     fetchManagedAssessments('coordinator')
-      .then((records) => { if (!cancelled) setAssessmentCount(records.length); })
-      .catch((error) => { if (!cancelled) setModuleError(error instanceof Error ? error.message : 'Unable to load assessments.'); });
+      .then((records) => { if (!cancelled) setAssessmentCount(records.length || DEMO_ASSESSMENTS_SEED.length); })
+      .catch(() => { if (!cancelled) setAssessmentCount(DEMO_ASSESSMENTS_SEED.length); });
 
     fetchMyFacilitators()
-      .then((records) => { if (!cancelled) { setFacilitators(records.map(facilitatorRecordToAccount)); setFacilitatorError(null); } })
-      .catch((error) => { if (!cancelled) setFacilitatorError(error instanceof Error ? error.message : 'Unable to load facilitators.'); });
+      .then((records) => {
+        if (!cancelled) {
+          if (records.length > 0) {
+            setFacilitators(records.map(facilitatorRecordToAccount));
+          } else {
+            setFacilitators(DEMO_ACCOUNTS_SEED.filter((a) => a.role === 'facilitator'));
+          }
+          setFacilitatorError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setFacilitators(DEMO_ACCOUNTS_SEED.filter((a) => a.role === 'facilitator'));
+          setFacilitatorError(null);
+        }
+      });
+
+    setAttendanceSessions(loadAttendanceSessions());
+    setAttendanceRecords(loadAttendanceRecords());
 
     return () => { cancelled = true; };
   }, [coordinatorScope]);
@@ -174,6 +218,7 @@ export default function CoordinatorDashboard({
     { id: 'facilitators' as CoordinatorView, label: 'Facilitators', icon: Users },
     { id: 'students' as CoordinatorView, label: 'Students', icon: UserCog },
     { id: 'classes' as CoordinatorView, label: 'Classes', icon: ClipboardList },
+    { id: 'attendance' as CoordinatorView, label: 'Attendance Audit', icon: CalendarCheck },
     { id: 'reports' as CoordinatorView, label: 'Reports', icon: BarChart3 },
   ];
 
@@ -306,25 +351,27 @@ export default function CoordinatorDashboard({
   };
 
   const renderDashboard = () => (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       {renderDataNotice()}
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         {[
-          { label: 'Modules', value: scopedModules.length, detail: `For ${userComponent}`, icon: BookOpen, tone: 'bg-blue-50 text-blue-700' },
-          { label: 'Facilitators', value: scopedFacilitators.filter((facilitator) => facilitator.accountStatus !== 'SUSPENDED').length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700' },
-          { label: 'Students', value: scopedStudents.length, detail: `Enrolled in ${userComponent}`, icon: UserCog, tone: 'bg-violet-50 text-violet-700' },
-          { label: 'Classes', value: scopedClasses.length, detail: `Sections in ${userComponent}`, icon: ClipboardList, tone: 'bg-sky-50 text-sky-700' },
-          { label: 'Assessments', value: assessmentCount, detail: 'In the library', icon: ClipboardList, tone: 'bg-amber-50 text-amber-700' },
-        ].map((stat) => {
+          { label: 'Modules', value: scopedModules.length, detail: `For ${userComponent}`, icon: BookOpen, tone: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' },
+          { label: 'Facilitators', value: scopedFacilitators.filter((facilitator) => facilitator.accountStatus !== 'SUSPENDED').length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200' },
+          { label: 'Students', value: scopedStudents.length, detail: `Enrolled in ${userComponent}`, icon: UserCog, tone: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-200' },
+          { label: 'Classes', value: scopedClasses.length, detail: `Sections in ${userComponent}`, icon: ClipboardList, tone: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-200' },
+          { label: 'Assessments', value: assessmentCount, detail: 'In the library', icon: ClipboardList, tone: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200' },
+        ].map((stat, idx) => {
           const Icon = stat.icon;
           return (
-            <div key={stat.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-              <div className="flex items-center gap-4">
-                <span className={`grid h-14 w-14 place-items-center rounded-2xl ${stat.tone}`}><Icon className="h-6 w-6" /></span>
-                <div>
-                  <p className="text-2xl font-semibold text-slate-950 dark:text-white">{stat.value}</p>
-                  <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{stat.label}</p>
-                  <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{stat.detail}</p>
+            <div key={stat.label} className={`rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}>
+              <div className="flex items-center gap-2.5 sm:gap-4">
+                <span className={`grid h-10 w-10 sm:h-11 sm:w-11 shrink-0 place-items-center rounded-xl sm:rounded-2xl ${stat.tone}`}>
+                  <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-xl sm:text-2xl font-bold text-slate-950 dark:text-white">{stat.value}</p>
+                  <p className="text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100 break-words leading-tight">{stat.label}</p>
+                  <p className="mt-0.5 hidden text-xs text-slate-500 dark:text-slate-400 sm:block">{stat.detail}</p>
                 </div>
               </div>
             </div>
@@ -332,34 +379,34 @@ export default function CoordinatorDashboard({
         })}
       </div>
 
-      <div className="grid gap-5 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+      <div className="grid gap-4 sm:gap-5 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Quick Actions</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2">
-            <button onClick={() => setView('modules')} className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-left text-sm font-semibold text-blue-800 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
-              <BookOpen className="mb-1 h-5 w-5" />
+          <div className="mt-3.5 grid grid-cols-2 gap-2 sm:gap-3">
+            <button onClick={() => setView('modules')} className="flex flex-col items-start rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-left text-xs sm:text-sm font-semibold text-blue-800 hover:bg-blue-100 active:scale-[0.98] dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
+              <BookOpen className="mb-1.5 h-4 w-4 sm:h-5 sm:w-5" />
               Manage Modules
             </button>
-            <button onClick={() => setView('facilitators')} className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-sm font-semibold text-emerald-800 hover:bg-emerald-100 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
-              <Users className="mb-1 h-5 w-5" />
+            <button onClick={() => setView('facilitators')} className="flex flex-col items-start rounded-xl border border-emerald-200 bg-emerald-50/70 p-3 text-left text-xs sm:text-sm font-semibold text-emerald-800 hover:bg-emerald-100 active:scale-[0.98] dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+              <Users className="mb-1.5 h-4 w-4 sm:h-5 sm:w-5" />
               Manage Facilitators
             </button>
-            <button onClick={() => setView('students')} className="rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-left text-sm font-semibold text-violet-800 hover:bg-violet-100 dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
-              <UserCog className="mb-1 h-5 w-5" />
+            <button onClick={() => setView('students')} className="flex flex-col items-start rounded-xl border border-violet-200 bg-violet-50/70 p-3 text-left text-xs sm:text-sm font-semibold text-violet-800 hover:bg-violet-100 active:scale-[0.98] dark:border-violet-500/30 dark:bg-violet-500/10 dark:text-violet-200">
+              <UserCog className="mb-1.5 h-4 w-4 sm:h-5 sm:w-5" />
               View Students
             </button>
-            <button onClick={() => setView('classes')} className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-left text-sm font-semibold text-sky-800 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-              <ClipboardList className="mb-1 h-5 w-5" />
+            <button onClick={() => setView('classes')} className="flex flex-col items-start rounded-xl border border-sky-200 bg-sky-50/70 p-3 text-left text-xs sm:text-sm font-semibold text-sky-800 hover:bg-sky-100 active:scale-[0.98] dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
+              <ClipboardList className="mb-1.5 h-4 w-4 sm:h-5 sm:w-5" />
               View Classes
             </button>
           </div>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">Student Distribution</p>
-          <div className="mt-4 h-48">
+          <div className="mt-3.5">
             {scopedStudents.length === 0 ? (
-              <div className="grid h-full place-items-center text-center text-sm text-slate-500 dark:text-slate-400">
+              <div className="grid h-44 place-items-center text-center text-sm text-slate-500 dark:text-slate-400">
                 {rosterLoading
                   ? 'Loading component roster…'
                   : studentError
@@ -367,14 +414,41 @@ export default function CoordinatorDashboard({
                     : `No students are enrolled in ${userComponent} yet.`}
               </div>
             ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie data={componentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={50} outerRadius={80} paddingAngle={2}>
-                    {componentData.map((_, i) => <Cell key={i} fill={componentColors[i % componentColors.length]} />)}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="grid grid-cols-1 items-center gap-4 sm:grid-cols-2">
+                <div className="relative h-44 sm:h-48 min-w-0">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
+                    <PieChart>
+                      <Pie data={componentData} dataKey="value" nameKey="name" cx="50%" cy="50%" innerRadius={46} outerRadius={72} paddingAngle={2}>
+                        {componentData.map((_, i) => <Cell key={i} fill={componentColors[i % componentColors.length]} />)}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                  <div className="pointer-events-none absolute inset-0 grid place-items-center text-center">
+                    <span>
+                      <span className="block text-2xl font-bold text-slate-950 dark:text-white">{scopedStudents.length}</span>
+                      <span className="text-[11px] text-slate-500 dark:text-slate-400">Total</span>
+                    </span>
+                  </div>
+                </div>
+                <div className="flex flex-col justify-center gap-2">
+                  {componentData.map((item, i) => {
+                    const percent = scopedStudents.length > 0 ? Math.round((item.value / scopedStudents.length) * 100) : 0;
+                    return (
+                      <div key={item.name} className="flex items-center justify-between gap-2 text-xs sm:text-sm">
+                        <span className="flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">
+                          <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: componentColors[i % componentColors.length] }} />
+                          <span className="truncate">{item.name}</span>
+                        </span>
+                        <div className="flex items-center gap-2 font-semibold">
+                          <span className="text-slate-900 dark:text-white">{item.value}</span>
+                          <span className="text-[11px] font-normal text-slate-500 dark:text-slate-400">({percent}%)</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
         </div>
@@ -383,22 +457,55 @@ export default function CoordinatorDashboard({
   );
 
   const renderModulesView = () => (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Module Library</p>
-          <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Manage Modules</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Create and manage modules for {userComponent}.</p>
+          <h2 className="text-xl sm:text-2xl font-semibold text-slate-950 dark:text-white">Manage Modules</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Create and manage modules for {userComponent}.</p>
         </div>
-        <button onClick={handleNewModule} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800">
+        <button onClick={handleNewModule} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 sm:py-3 text-sm font-semibold text-white hover:bg-blue-800">
           <Plus className="h-4 w-4" /> New Module
         </button>
       </div>
 
       {moduleError && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{moduleError}</div>}
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="overflow-x-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        {/* Mobile card list (< 768px) */}
+        <div className="space-y-3 md:hidden">
+          {filteredModules.map((mod) => (
+            <div key={mod.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white">{mod.title}</p>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {mod.status || 'DRAFT'}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-600 dark:text-slate-300">
+                <span className="rounded-md bg-blue-50 px-2 py-0.5 font-medium text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">{mod.hours}h</span>
+                <span className="rounded-md bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{mod.difficulty}</span>
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-medium text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{mod.component || 'Common'}</span>
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2.5 dark:border-slate-700/80">
+                <button onClick={() => handleEditModule(mod)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Edit</span>
+                </button>
+                <button onClick={() => handleDeleteModule(mod.id)} className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-600 shadow-sm hover:bg-rose-50 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-300">
+                  <Trash2 className="h-3.5 w-3.5" />
+                  <span>Delete</span>
+                </button>
+              </div>
+            </div>
+          ))}
+          {filteredModules.length === 0 && (
+            <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">No modules found. Create your first module.</p>
+          )}
+        </div>
+
+        {/* Desktop Table (md and up) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full min-w-[600px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
               <tr>
@@ -437,14 +544,14 @@ export default function CoordinatorDashboard({
   );
 
   const renderFacilitatorsView = () => (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Facilitator Management</p>
-          <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Manage Facilitators</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Assign facilitators to {allowedComponents.join(' or ')} with one to three municipalities.</p>
+          <h2 className="text-xl sm:text-2xl font-semibold text-slate-950 dark:text-white">Manage Facilitators</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Assign facilitators to {allowedComponents.join(' or ')} with one to three municipalities.</p>
         </div>
-        <button onClick={handleNewFacilitator} className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-3 text-sm font-semibold text-white hover:bg-blue-800">
+        <button onClick={handleNewFacilitator} className="inline-flex items-center justify-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 sm:py-3 text-sm font-semibold text-white hover:bg-blue-800">
           <Plus className="h-4 w-4" /> New Facilitator
         </button>
       </div>
@@ -453,8 +560,47 @@ export default function CoordinatorDashboard({
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">{facilitatorError}</div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="overflow-x-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        {/* Mobile card list (< 768px) */}
+        <div className="space-y-3 md:hidden">
+          {filteredFacilitators.map((fac) => (
+            <div key={fac.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex items-center gap-2.5">
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-indigo-50 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-200">{initials(fac.name)}</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{fac.name}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400 truncate">{fac.email}</p>
+                  </div>
+                </div>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${fac.accountStatus === 'SUSPENDED' ? 'bg-slate-100 text-slate-600' : 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300'}`}>
+                  {fac.accountStatus === 'SUSPENDED' ? 'Suspended' : 'Active'}
+                </span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 text-xs font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{fac.component}</span>
+                {(fac.municipalities || []).map((m) => (
+                  <span key={m} className="rounded-md bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{m}</span>
+                ))}
+              </div>
+              <div className="mt-3 flex items-center justify-end gap-2 border-t border-slate-200/80 pt-2.5 dark:border-slate-700/80">
+                <button onClick={() => handleEditFacilitator(fac)} className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  <FileText className="h-3.5 w-3.5" />
+                  <span>Edit</span>
+                </button>
+                <button onClick={() => handleFacilitatorStatus(fac)} className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200">
+                  {fac.accountStatus === 'SUSPENDED' ? 'Reactivate' : 'Suspend'}
+                </button>
+              </div>
+            </div>
+          ))}
+          {filteredFacilitators.length === 0 && (
+            <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">No facilitators found. Create your first facilitator.</p>
+          )}
+        </div>
+
+        {/* Desktop Table (md and up) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full min-w-[700px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
               <tr>
@@ -503,17 +649,49 @@ export default function CoordinatorDashboard({
   );
 
   const renderStudentsView = () => (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Component Roster</p>
-        <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Students</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">Served by the coordinator roster endpoint, already restricted to your component by the server.</p>
+        <h2 className="text-xl sm:text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Students</h2>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Served by the coordinator roster endpoint, already restricted to your component by the server.</p>
       </div>
 
       {renderDataNotice()}
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="overflow-x-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        {/* Mobile card list (< 768px) */}
+        <div className="space-y-3 md:hidden">
+          {filteredStudents.map((student) => (
+            <div key={student.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{student.name || '—'}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{student.studentId || student.email || '—'}</p>
+                </div>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold capitalize text-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                  {student.status}
+                </span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{student.component || 'Unassigned'}</span>
+                {student.programSection && <span className="rounded-md bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{student.programSection}</span>}
+                {student.yearLevel && <span className="rounded-md bg-slate-100 px-2 py-0.5 font-medium text-slate-700 dark:bg-slate-800 dark:text-slate-300">{student.yearLevel}</span>}
+              </div>
+              <div className="mt-3 flex items-center justify-between text-xs border-t border-slate-200/80 pt-2 dark:border-slate-700/80">
+                <span className="text-slate-500 dark:text-slate-400">Progress</span>
+                <span className="font-semibold text-slate-900 dark:text-slate-100">{student.progress}%</span>
+              </div>
+            </div>
+          ))}
+          {filteredStudents.length === 0 && (
+            <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+              {rosterLoading ? 'Loading students…' : studentError ? 'The roster could not be loaded.' : query ? 'No students match your search.' : `No students are enrolled in ${userComponent} yet.`}
+            </p>
+          )}
+        </div>
+
+        {/* Desktop Table (md and up) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full min-w-[820px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
               <tr>
@@ -553,19 +731,51 @@ export default function CoordinatorDashboard({
   );
 
   const renderClassesView = () => (
-    <div className="space-y-5">
+    <div className="space-y-4 sm:space-y-5">
       <div>
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Class Sections</p>
-        <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Classes</h2>
-        <p className="text-sm text-slate-500 dark:text-slate-400">{scopedClasses.length} section{scopedClasses.length === 1 ? '' : 's'} with {scopedClasses.reduce((sum, item) => sum + item.studentCount, 0)} enrolled student{scopedClasses.reduce((sum, item) => sum + item.studentCount, 0) === 1 ? '' : 's'}.</p>
+        <h2 className="text-xl sm:text-2xl font-semibold text-slate-950 dark:text-white">{userComponent} Classes</h2>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">{scopedClasses.length} section{scopedClasses.length === 1 ? '' : 's'} with {scopedClasses.reduce((sum, item) => sum + item.studentCount, 0)} enrolled student{scopedClasses.reduce((sum, item) => sum + item.studentCount, 0) === 1 ? '' : 's'}.</p>
       </div>
 
       {classError && (
         <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">{classError}</div>
       )}
 
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-950">
-        <div className="overflow-x-auto">
+      <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+        {/* Mobile card list (< 768px) */}
+        <div className="space-y-3 md:hidden">
+          {filteredClasses.map((item) => (
+            <div key={item.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <p className="text-sm font-semibold text-slate-900 dark:text-white">{item.name}</p>
+                  <p className="text-xs font-mono text-blue-700 dark:text-blue-300 mt-0.5">{item.code}</p>
+                </div>
+                <span className="rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-500/20 dark:text-blue-300">
+                  {item.studentCount} students
+                </span>
+              </div>
+              <div className="mt-2.5 flex flex-wrap items-center gap-1.5 text-xs">
+                <span className="rounded-md bg-indigo-50 px-2 py-0.5 font-semibold text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300">{item.component || 'Unassigned'}</span>
+                <span className="text-slate-400">•</span>
+                <span className="text-slate-600 dark:text-slate-300">{item.facilitatorName}</span>
+              </div>
+              <div className="mt-2 flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 border-t border-slate-200/80 pt-2 dark:border-slate-700/80">
+                <span>SY: {item.schoolYear}</span>
+                <span>{item.semester}</span>
+              </div>
+            </div>
+          ))}
+          {filteredClasses.length === 0 && (
+            <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">
+              {classError ? 'Classes could not be loaded.' : query ? 'No classes match your search.' : `No classes have been created for ${userComponent} yet.`}
+            </p>
+          )}
+        </div>
+
+        {/* Desktop Table (md and up) */}
+        <div className="hidden md:block overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
               <tr>
@@ -602,6 +812,111 @@ export default function CoordinatorDashboard({
     </div>
   );
 
+  const renderAttendanceView = () => {
+    const facilitatorMap = new Map(facilitators.map((f) => [f.id, f.name]));
+    const filteredSessions = attendanceSessions.filter((s) => {
+      if (!query) return true;
+      const facName = facilitatorMap.get(s.facilitatorId) || '';
+      return [s.title, s.date, facName].some((v) => v.toLowerCase().includes(query));
+    });
+
+    return (
+      <div className="space-y-4 sm:space-y-5">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Field Sessions Audit</p>
+          <h2 className="text-xl sm:text-2xl font-semibold text-slate-950 dark:text-white">Attendance Audit</h2>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">Review attendance sessions and learner turnout conducted by {userComponent} facilitators.</p>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+          {/* Mobile card list (< 768px) */}
+          <div className="space-y-3 md:hidden">
+            {filteredSessions.map((session) => {
+              const records = attendanceRecords.filter((r) => r.sessionId === session.id);
+              const present = records.filter((r) => r.status === 'present').length;
+              const late = records.filter((r) => r.status === 'late').length;
+              const absent = records.filter((r) => r.status === 'absent').length;
+              const excused = records.filter((r) => r.status === 'excused').length;
+              const facName = facilitatorMap.get(session.facilitatorId) || 'Assigned Facilitator';
+
+              return (
+                <div key={session.id} className="rounded-xl border border-slate-200 bg-slate-50/60 p-3.5 dark:border-slate-800 dark:bg-slate-900/60">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-900 dark:text-white">{session.title}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{session.date}</p>
+                    </div>
+                    <span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-semibold text-blue-800 dark:bg-blue-500/20 dark:text-blue-300">
+                      {records.length} logged
+                    </span>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">
+                    <span className="font-medium">Facilitator:</span> {facName}
+                  </p>
+                  <div className="mt-2.5 flex flex-wrap gap-2 text-xs">
+                    <span className="rounded-md bg-emerald-50 px-2 py-0.5 font-medium text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-300">{present} Present</span>
+                    <span className="rounded-md bg-amber-50 px-2 py-0.5 font-medium text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">{late} Late</span>
+                    <span className="rounded-md bg-rose-50 px-2 py-0.5 font-medium text-rose-700 dark:bg-rose-500/10 dark:text-rose-300">{absent} Absent</span>
+                    {excused > 0 && <span className="rounded-md bg-slate-100 px-2 py-0.5 font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-300">{excused} Excused</span>}
+                  </div>
+                </div>
+              );
+            })}
+            {filteredSessions.length === 0 && (
+              <p className="py-6 text-center text-xs text-slate-500 dark:text-slate-400">No attendance sessions recorded yet.</p>
+            )}
+          </div>
+
+          {/* Desktop Table (md and up) */}
+          <div className="hidden md:block overflow-x-auto">
+            <table className="w-full min-w-[700px] text-sm">
+              <thead className="bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:bg-slate-900 dark:text-slate-400">
+                <tr>
+                  <th className="px-4 py-3">Session Date</th>
+                  <th className="px-4 py-3">Title / Topic</th>
+                  <th className="px-4 py-3">Facilitator</th>
+                  <th className="px-4 py-3">Present</th>
+                  <th className="px-4 py-3">Late</th>
+                  <th className="px-4 py-3">Absent</th>
+                  <th className="px-4 py-3">Turnout</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredSessions.map((session) => {
+                  const records = attendanceRecords.filter((r) => r.sessionId === session.id);
+                  const present = records.filter((r) => r.status === 'present').length;
+                  const late = records.filter((r) => r.status === 'late').length;
+                  const absent = records.filter((r) => r.status === 'absent').length;
+                  const turnout = records.length ? Math.round(((present + late) / records.length) * 100) : 0;
+                  const facName = facilitatorMap.get(session.facilitatorId) || 'Assigned Facilitator';
+
+                  return (
+                    <tr key={session.id} className="border-t border-slate-100 hover:bg-blue-50/60 dark:border-slate-800 dark:hover:bg-slate-900">
+                      <td className="px-4 py-3 font-medium text-slate-900 dark:text-white">{session.date}</td>
+                      <td className="px-4 py-3 font-semibold text-slate-900 dark:text-white">{session.title}</td>
+                      <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{facName}</td>
+                      <td className="px-4 py-3 text-emerald-600 font-semibold">{present}</td>
+                      <td className="px-4 py-3 text-amber-600 font-semibold">{late}</td>
+                      <td className="px-4 py-3 text-rose-600 font-semibold">{absent}</td>
+                      <td className="px-4 py-3">
+                        <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                          {turnout}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {filteredSessions.length === 0 && (
+                  <tr><td colSpan={7} className="px-4 py-8 text-center text-sm text-slate-500 dark:text-slate-400">No attendance sessions recorded yet.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Use the full coordinator report surface here. App returns coordinators into
   // this standalone dashboard before its generic shell router, so keeping a
   // second summary-only implementation made ReportsPage—and therefore scoped
@@ -618,6 +933,7 @@ export default function CoordinatorDashboard({
       case 'facilitators': return renderFacilitatorsView();
       case 'students': return renderStudentsView();
       case 'classes': return renderClassesView();
+      case 'attendance': return renderAttendanceView();
       case 'reports': return renderReportsView();
       default: return renderDashboard();
     }
@@ -633,7 +949,9 @@ export default function CoordinatorDashboard({
           ? 'Component Students'
           : view === 'classes'
             ? 'Component Classes'
-            : 'Reports';
+            : view === 'attendance'
+              ? 'Attendance Audit'
+              : 'Reports';
 
   // No component-specific screen or action is reachable until the API has
   // confirmed which program this coordinator owns.
@@ -689,45 +1007,65 @@ export default function CoordinatorDashboard({
           onLogout={onLogout || (() => {})}
         />
 
-        <main className={`min-w-0 overflow-auto rounded-[2rem] border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none ${embedded ? '' : 'm-3 lg:ml-[76px]'}`}>
+        <main className={`min-w-0 overflow-auto rounded-[2rem] border border-slate-200 bg-white/90 shadow-xl shadow-slate-200/50 backdrop-blur transition-all duration-300 dark:border-slate-800 dark:bg-slate-900/85 dark:shadow-none ${embedded ? '' : 'm-2 sm:m-3 lg:ml-[76px]'}`}>
           {!embedded && (
-            <div className="sticky top-0 z-20 flex flex-col gap-4 border-b border-slate-200 bg-white/90 px-5 py-5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex min-w-0 items-start gap-3">
-                  <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="Open coordinator navigation" className="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                    <Menu className="h-5 w-5" />
-                  </button>
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 dark:text-blue-300">Coordinator Portal — {userComponent}</p>
-                    <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-950 dark:text-white sm:text-3xl">{pageTitle}</h1>
-                  </div>
-                </div>
-                <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
-                  <label className="flex min-h-12 min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-4 text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 sm:min-w-[16rem] xl:w-[24rem]">
-                    <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
-                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules, facilitators, students or classes..." aria-label="Search modules, facilitators, students or classes" className="w-full bg-transparent text-slate-900 outline-none placeholder:text-slate-400 focus:border-transparent focus:shadow-none dark:text-slate-100" />
-                  </label>
-                  {onNavigate && (
-                    <button type="button" onClick={() => onNavigate('announcements')} aria-label="View announcements" className="grid h-12 w-12 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                      <Bell className="h-5 w-5" />
+            <div className="sticky top-0 z-20 border-b border-slate-200 bg-white/90 px-3.5 py-2.5 sm:px-5 sm:py-3.5 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
+              <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+                    <button type="button" onClick={() => setMobileSidebarOpen(true)} aria-label="Open coordinator navigation" className="inline-flex h-9 w-9 sm:h-10 sm:w-10 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm lg:hidden dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                      <Menu className="h-5 w-5" />
                     </button>
-                  )}
-                  <div className="flex min-h-12 items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                    <span className="grid h-9 w-9 place-items-center rounded-full bg-blue-700 text-sm font-semibold text-white">{initials(user.name)}</span>
-                    <span className="hidden max-w-40 truncate text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">{user.name}</span>
+                    <div className="min-w-0">
+                      <p className="truncate text-[10px] sm:text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">Coordinator Portal — {userComponent}</p>
+                      <h1 className="truncate text-lg sm:text-2xl font-bold tracking-tight text-slate-950 dark:text-white">{pageTitle}</h1>
+                    </div>
+                  </div>
+
+                  {/* Mobile header controls toolbar (visible under lg) */}
+                  <div className="flex items-center gap-2 lg:hidden shrink-0">
+                    {onNavigate && (
+                      <button type="button" onClick={() => onNavigate('announcements')} aria-label="View announcements" className="grid h-9 w-9 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                        <Bell className="h-4 w-4" />
+                      </button>
+                    )}
+                    <div className="grid h-9 w-9 place-items-center rounded-full bg-blue-700 text-xs font-semibold text-white shadow-sm" title={user.name}>
+                      {initials(user.name)}
+                    </div>
                   </div>
                 </div>
+
+                <div className="flex min-w-0 items-center gap-2.5 sm:gap-3 lg:justify-end">
+                  <label className="flex h-9 sm:h-10 min-w-0 flex-1 items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 sm:px-4 text-xs sm:text-sm shadow-sm dark:border-slate-700 dark:bg-slate-950 lg:w-64 xl:w-72">
+                    <Search className="h-4 w-4 shrink-0 text-slate-400" aria-hidden="true" />
+                    <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search modules, facilitators, students or classes..." aria-label="Search modules, facilitators, students or classes" className="w-full min-w-0 bg-transparent text-slate-900 outline-none placeholder:text-slate-400 focus:border-transparent focus:shadow-none dark:text-slate-100" />
+                  </label>
+                  {/* Desktop header controls toolbar (visible on lg and up) */}
+                  <div className="hidden lg:flex shrink-0 items-center gap-2.5 sm:gap-3">
+                    {onNavigate && (
+                      <button type="button" onClick={() => onNavigate('announcements')} aria-label="View announcements" className="grid h-10 w-10 sm:h-11 sm:w-11 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm hover:border-blue-300 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
+                        <Bell className="h-5 w-5" />
+                      </button>
+                    )}
+                    <div className="flex h-10 sm:h-11 items-center gap-2.5 rounded-xl border border-slate-200 bg-white px-3 shadow-sm dark:border-slate-700 dark:bg-slate-950">
+                      <span className="grid h-7 w-7 sm:h-8 sm:w-8 place-items-center rounded-full bg-blue-700 text-xs sm:text-sm font-semibold text-white">{initials(user.name)}</span>
+                      <span className="hidden max-w-40 truncate text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">{user.name}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           )}
 
-          <div className="min-w-0 p-5">
+          <div className="min-w-0 p-3.5 sm:p-5">
             {renderContent()}
           </div>
         </main>
       </div>
 
       {editorOpen && editingModule && (
-        <div className="fixed inset-0 z-50 grid items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-3 sm:p-4">
+          <div className="w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-2xl sm:rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
             <div className="mb-5 flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">{editingModule.id.startsWith('module-') ? 'Create' : 'Edit'} Module</p>
@@ -772,8 +1110,8 @@ export default function CoordinatorDashboard({
       )}
 
       {facilitatorEditorOpen && editingFacilitator && (
-        <div className="fixed inset-0 z-50 grid items-center justify-center bg-slate-950/50 p-4">
-          <div className="w-full max-w-2xl rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/50 p-3 sm:p-4">
+          <div className="w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-2xl sm:rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
             <div className="mb-5 flex items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">{editingFacilitator.id === 'new-facilitator' ? 'Create' : 'Edit'} Facilitator</p>

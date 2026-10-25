@@ -89,18 +89,21 @@ export default function AdminGradesView() {
   };
 
   return (
-    <section className="space-y-5 p-5">
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+    <section className="space-y-4 sm:space-y-5 p-3.5 sm:p-5">
+      <div className="flex flex-col gap-3 sm:gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 dark:text-blue-300">Official Grades</p>
-          <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Semester Grade Center</h2>
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Save drafts first, then release verified grades to students.</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-slate-950 dark:text-white">Semester Grade Center</h2>
+          <p className="mt-1 text-xs sm:text-sm text-slate-500 dark:text-slate-400">Save drafts first, then release verified grades to students.</p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <label className="text-sm font-medium text-slate-700 dark:text-slate-200">School year
-            <input value={schoolYear} onChange={(event) => setSchoolYear(event.target.value)} pattern="\d{4}-\d{4}" className="ml-2 rounded-xl border border-slate-300 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-900" />
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center text-xs sm:text-sm font-medium text-slate-700 dark:text-slate-200">
+            <span>School year</span>
+            <input value={schoolYear} onChange={(event) => setSchoolYear(event.target.value)} pattern="\d{4}-\d{4}" className="ml-2 w-28 sm:w-32 rounded-xl border border-slate-300 bg-white px-2.5 py-1.5 text-xs sm:text-sm dark:border-slate-700 dark:bg-slate-900" />
           </label>
-          {(['FIRST', 'SECOND'] as const).map((value) => <button key={value} type="button" onClick={() => setSemester(value)} className={`rounded-xl px-4 py-2 text-sm font-semibold ${semester === value ? 'bg-blue-700 text-white' : 'border border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'}`}>{value === 'FIRST' ? 'First Semester' : 'Second Semester'}</button>)}
+          <div className="flex gap-1.5 sm:gap-2">
+            {(['FIRST', 'SECOND'] as const).map((value) => <button key={value} type="button" onClick={() => setSemester(value)} className={`rounded-xl px-2.5 sm:px-4 py-1.5 sm:py-2 text-xs sm:text-sm font-semibold ${semester === value ? 'bg-blue-700 text-white' : 'border border-slate-300 bg-white text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200'}`}>{value === 'FIRST' ? 'First Semester' : 'Second Semester'}</button>)}
+          </div>
         </div>
       </div>
 

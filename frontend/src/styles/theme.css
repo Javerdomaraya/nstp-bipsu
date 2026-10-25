@@ -636,8 +636,8 @@
   }
 
   .landing-page .section-title {
-    font-size: 1.85rem;
-    line-height: 1.12;
+    font-size: 1.45rem;
+    line-height: 1.25;
   }
 
   .landing-page :where(section, div, button, span, p, h1, h2, h3) {

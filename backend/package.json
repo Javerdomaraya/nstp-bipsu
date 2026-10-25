@@ -7,13 +7,15 @@
   "scripts": {
     "test": "node --test",
     "lint": "node --check src/server.js && node --check src/websocket.js && node --check src/modules/auth/auth.service.js && node --check src/modules/auth/user.dto.js && node --check src/modules/auth/passwords.js && node --check src/modules/follows/follows.routes.js && node --check src/modules/follows/follows.controller.js && node --check src/modules/follows/follows.service.js && node --check src/modules/payments/payments.routes.js && node --check src/modules/payments/payments.controller.js && node --check src/modules/payments/payments.service.js && node --check src/modules/nstp/nstp.routes.js && node --check src/modules/nstp/nstp.controller.js && node --check src/modules/nstp/nstp.authorization.js && node --check src/modules/nstp/nstp.service.js && node --check src/modules/nstp/module-url.validation.js && node --check src/modules/profileTemplates/profileTemplates.routes.js && node --check src/modules/profileTemplates/profileTemplates.controller.js && node --check src/modules/profileTemplates/profileTemplates.service.js && node --check src/modules/profileTemplates/profileTemplates.validation.js && node --check src/modules/staff/staff.routes.js && node --check src/modules/staff/staff.controller.js && node --check src/modules/staff/staff.service.js && node --check src/modules/staff/staff.validation.js && node --check src/modules/grades/grade.policy.js && node --check src/modules/grades/grades.routes.js && node --check src/modules/grades/grades.controller.js && node --check src/modules/grades/grades.service.js && node --check src/modules/grades/grades.validation.js && node --check scripts/preflight-production.mjs && node --check scripts/report-orphans.mjs && node --check scripts/verify-schema.mjs && node --check scripts/resolve-failed-migrations.mjs && node --check scripts/admin-create.mjs && node --check scripts/admin-reset-password.mjs && node --check scripts/seed-address.mjs && node --check scripts/lib/release-gate.mjs && node --check scripts/lib/preflight-checks.mjs && node --check scripts/lib/orphan-checks.mjs && node --check scripts/lib/schema-snapshot.mjs && node --check scripts/lib/foreign-key-integrity.mjs",
-    "dev": "node --watch-path=./src --watch-path=./prisma src/server.js",
-    "start": "node src/server.js",
+    "dev": "node --dns-result-order=ipv4first --watch-path=./src --watch-path=./prisma src/server.js",
+    "start": "node --dns-result-order=ipv4first src/server.js",
     "build": "npm run prisma:generate",
     "migrate:deploy": "npm run report:orphans && npm run preflight:production && prisma migrate deploy && npm run verify:schema",
     "migrate:status": "prisma migrate status",
     "migrate:recover": "node scripts/resolve-failed-migrations.mjs",
     "seed": "node scripts/seed-address.mjs",
+    "seed:demo-data": "node scripts/seed-demo-data.mjs",
+    "seed:demo-roles": "node scripts/seed-demo-roles.mjs",
     "admin:create": "node scripts/admin-create.mjs",
     "admin:reset-password": "node scripts/admin-reset-password.mjs",
     "report:orphans": "node scripts/report-orphans.mjs",
@@ -32,6 +34,8 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@neondatabase/serverless": "^1.2.0",
+    "@prisma/adapter-neon": "^7.10.1",
     "@prisma/client": "^6.19.3",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.5",
@@ -41,6 +45,7 @@
     "helmet": "^8.2.0",
     "jsonwebtoken": "^9.0.3",
     "socket.io": "^4.8.3",
+    "ws": "^8.21.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {

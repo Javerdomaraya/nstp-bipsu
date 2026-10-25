@@ -1,5 +1,15 @@
 import { ApiRequestError, apiGet, apiPost, apiDel } from '../services/apiClient';
 import { toCoordinatorScope, toNstpComponent, type CoordinatorScope, type NstpComponent } from './nstpComponents';
+import {
+  DEMO_ACCOUNTS_SEED,
+  DEMO_ASSESSMENTS_SEED,
+  DEMO_ATTENDANCE_RECORDS_SEED,
+  DEMO_ATTENDANCE_SESSIONS_SEED,
+  DEMO_GRADES_SEED,
+  DEMO_MODULES_SEED,
+  DEMO_PENDING_REGISTRATIONS_SEED,
+  DEMO_STUDENTS_SEED,
+} from './demoSeedData';
 
 // The component and coordinator-scope vocabularies live in their own
 // dependency-free module so the security-critical parsers can be imported (and
@@ -690,31 +700,45 @@ function sessionRole(): string | null {
  * to any reader: an absent key and a key holding `'[]'` both parse to `[]` via
  * `safeJsonParse(readSensitive(key), [])`.
  */
-export function ensureNstpSeedData() {
+export function ensureNstpSeedData(forceSeed = false) {
   if (typeof window === 'undefined') return;
-  if (sessionRole() === 'coordinator') return;
 
-  if (!readSensitive(ACCOUNTS_KEY)) {
-    writeSensitive(ACCOUNTS_KEY, JSON.stringify([]));
+  const accountsRaw = readSensitive(ACCOUNTS_KEY);
+  if (forceSeed || accountsRaw === null) {
+    writeSensitive(ACCOUNTS_KEY, JSON.stringify(DEMO_ACCOUNTS_SEED));
   }
-  if (!readSensitive(ASSESSMENTS_KEY)) {
-    writeSensitive(ASSESSMENTS_KEY, JSON.stringify([]));
+  const assessmentsRaw = readSensitive(ASSESSMENTS_KEY);
+  if (forceSeed || assessmentsRaw === null) {
+    writeSensitive(ASSESSMENTS_KEY, JSON.stringify(DEMO_ASSESSMENTS_SEED));
   }
-  if (!readSensitive(MODULES_KEY)) {
-    writeSensitive(MODULES_KEY, JSON.stringify([]));
+  const modulesRaw = readSensitive(MODULES_KEY);
+  if (forceSeed || modulesRaw === null) {
+    writeSensitive(MODULES_KEY, JSON.stringify(DEMO_MODULES_SEED));
   }
-  if (!readSensitive(STUDENTS_KEY)) {
-    writeSensitive(STUDENTS_KEY, JSON.stringify([]));
+  const studentsRaw = readSensitive(STUDENTS_KEY);
+  if (forceSeed || studentsRaw === null) {
+    writeSensitive(STUDENTS_KEY, JSON.stringify(DEMO_STUDENTS_SEED));
   }
-  if (!readSensitive(PENDING_REGISTRATIONS_KEY)) {
-    writeSensitive(PENDING_REGISTRATIONS_KEY, JSON.stringify([]));
+  const pendingRaw = readSensitive(PENDING_REGISTRATIONS_KEY);
+  if (forceSeed || pendingRaw === null) {
+    writeSensitive(PENDING_REGISTRATIONS_KEY, JSON.stringify(DEMO_PENDING_REGISTRATIONS_SEED));
   }
-  if (!readSensitive(GRADES_KEY)) {
-    writeSensitive(GRADES_KEY, JSON.stringify([]));
+  const gradesRaw = readSensitive(GRADES_KEY);
+  if (forceSeed || gradesRaw === null) {
+    writeSensitive(GRADES_KEY, JSON.stringify(DEMO_GRADES_SEED));
   }
-  if (!readSensitive(TRAINING_GROUPS_KEY)) {
-    writeSensitive(TRAINING_GROUPS_KEY, JSON.stringify([]));
+  const attSessionsRaw = readSensitive(ATTENDANCE_SESSIONS_KEY);
+  if (forceSeed || attSessionsRaw === null) {
+    writeSensitive(ATTENDANCE_SESSIONS_KEY, JSON.stringify(DEMO_ATTENDANCE_SESSIONS_SEED));
   }
+  const attRecordsRaw = readSensitive(ATTENDANCE_RECORDS_KEY);
+  if (forceSeed || attRecordsRaw === null) {
+    writeSensitive(ATTENDANCE_RECORDS_KEY, JSON.stringify(DEMO_ATTENDANCE_RECORDS_SEED));
+  }
+}
+
+export function resetDemoSeedData() {
+  ensureNstpSeedData(true);
 }
 
 export async function initializeFromApi() {
@@ -973,6 +997,7 @@ export async function saveGradeRecords(records: NstpGradeRecord[]): Promise<bool
 
 export function loadAttendanceRecords(): NstpAttendanceRecord[] {
   if (typeof window === 'undefined') return [];
+  ensureNstpSeedData();
   return safeJsonParse<NstpAttendanceRecord[]>(readSensitive(ATTENDANCE_RECORDS_KEY), []);
 }
 
@@ -988,6 +1013,7 @@ export async function saveAttendanceRecords(records: NstpAttendanceRecord[]): Pr
 
 export function loadAttendanceSessions(): NstpAttendanceSession[] {
   if (typeof window === 'undefined') return [];
+  ensureNstpSeedData();
   return safeJsonParse<NstpAttendanceSession[]>(readSensitive(ATTENDANCE_SESSIONS_KEY), []);
 }
 

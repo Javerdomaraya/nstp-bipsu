@@ -22,6 +22,7 @@ export type ProfileExportConfiguration = {
   headerImageName?: string;
   signatureSpacing: number;
   fieldOrder: string[];
+  selectedFields?: string[];
   showFieldBorders: boolean;
   repeatHeader: boolean;
 };
@@ -53,7 +54,7 @@ const CONFIGURATION_KEYS = new Set([
   'layout', 'pageSize', 'orientation', 'republicLine', 'schoolName', 'certificationLine',
   'officeName', 'formTitle', 'academicPeriod', 'fieldHeader', 'valueHeader', 'accentColor',
   'leftCopyLabel', 'rightCopyLabel', 'studentSignatureLabel', 'signatoryName', 'signatoryTitle',
-  'headerImageDataUrl', 'headerImageName', 'signatureSpacing', 'fieldOrder', 'showFieldBorders', 'repeatHeader',
+  'headerImageDataUrl', 'headerImageName', 'signatureSpacing', 'fieldOrder', 'selectedFields', 'showFieldBorders', 'repeatHeader',
 ]);
 
 const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -78,8 +79,14 @@ export function validateProfileConfiguration(value: unknown): ProfileExportConfi
   if (!/^#[0-9a-fA-F]{6}$/.test(String(value.accentColor))) throw new Error('Accent color must be a six-digit hex color.');
   if (!Number.isInteger(Number(value.signatureSpacing)) || Number(value.signatureSpacing) < 20 || Number(value.signatureSpacing) > 160) throw new Error('Signature spacing must be between 20 and 160.');
   if (typeof value.showFieldBorders !== 'boolean' || typeof value.repeatHeader !== 'boolean') throw new Error('Invalid template display options.');
+  if (!Array.isArray(value.fieldOrder) && Array.isArray(value.selectedFields)) {
+    (value as Record<string, unknown>).fieldOrder = value.selectedFields;
+  }
   if (!Array.isArray(value.fieldOrder) || value.fieldOrder.length < 1 || value.fieldOrder.length > PROFILE_FIELDS.size) throw new Error('Invalid profile field order.');
   if (new Set(value.fieldOrder).size !== value.fieldOrder.length || value.fieldOrder.some((field) => typeof field !== 'string' || !PROFILE_FIELDS.has(field))) throw new Error('Profile fields must be recognized and unique.');
+  if (value.selectedFields !== undefined && (!Array.isArray(value.selectedFields) || value.selectedFields.some((field) => typeof field !== 'string' || !PROFILE_FIELDS.has(field)))) {
+    throw new Error('Profile fields must be recognized and unique.');
+  }
   if (value.headerImageDataUrl !== undefined) {
     if (!validText(value.headerImageDataUrl, 750_000) || !/^data:image\/(png|jpeg);base64,[A-Za-z0-9+/=]+$/.test(String(value.headerImageDataUrl))) throw new Error('Header image must be a PNG or JPEG under the allowed size.');
   }

@@ -352,6 +352,38 @@ export async function getMyQualifyingResults(req, res) {
   return sendSuccess(res, results);
 }
 
+export async function submitMyQualifyingResult(req, res) {
+  const body = req.body || {};
+  const score = typeof body.score === 'number' ? body.score : Number(body.score);
+  if (!Number.isFinite(score) || score < 0 || score > 100) {
+    return sendError(res, 'Valid exam score is required.', 400);
+  }
+  const id = body.id || `qxr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const preferredComponent = String(body.preferredComponent || 'CWTS');
+  const result = await prisma.qualifyingExamResult.upsert({
+    where: { id },
+    update: {
+      score: Math.round(score),
+      preferredComponent,
+      timestamp: body.timestamp || new Date().toISOString(),
+      assignedComponent: body.assignedComponent || null,
+      status: body.status || 'completed',
+    },
+    create: {
+      id,
+      userId: req.user.id,
+      userName: req.user.name || 'Student',
+      userEmail: req.user.email || '',
+      preferredComponent,
+      score: Math.round(score),
+      timestamp: body.timestamp || new Date().toISOString(),
+      assignedComponent: body.assignedComponent || null,
+      status: body.status || 'completed',
+    },
+  });
+  return sendSuccess(res, result, 201);
+}
+
 export async function listInstructorClasses(req, res) {
   const sections = await prisma.section.findMany({ where: { instructorId: req.instructor.id } });
   return sendSuccess(res, sections);
@@ -411,4 +443,83 @@ export async function listCoordinatorClasses(req, res) {
  */
 export async function listCoordinatorTrainingGroupsController(req, res) {
   return sendSuccess(res, await listCoordinatorTrainingGroups(req.coordinator.allowedComponentIds));
+}
+
+export async function listInstructorAttendanceSessions(req, res) {
+  const sessions = await prisma.attendanceSession.findMany({
+    where: { facilitatorId: { in: [req.instructor.id, req.user.id] } },
+    orderBy: { createdAt: 'desc' },
+  });
+  return sendSuccess(res, sessions);
+}
+
+export async function upsertInstructorAttendanceSession(req, res) {
+  const payload = req.body || {};
+  const id = payload.id || `ats-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const date = payload.date || new Date().toISOString().split('T')[0];
+  const title = payload.title || `NSTP Session - ${date}`;
+  const session = await prisma.attendanceSession.upsert({
+    where: { id },
+    update: { date, title },
+    create: {
+      id,
+      date,
+      title,
+      facilitatorId: req.instructor.id,
+      createdAt: new Date(),
+    },
+  });
+  return sendSuccess(res, session, 201);
+}
+
+export async function removeInstructorAttendanceSession(req, res) {
+  const session = await prisma.attendanceSession.findFirst({
+    where: { id: req.params.id, facilitatorId: { in: [req.instructor.id, req.user.id] } },
+  });
+  if (!session) return sendError(res, 'Attendance session not found.', 404);
+  await prisma.attendanceRecord.deleteMany({ where: { sessionId: session.id } });
+  await prisma.attendanceSession.delete({ where: { id: session.id } });
+  return sendSuccess(res, { deleted: session.id });
+}
+
+export async function listInstructorAttendanceRecords(req, res) {
+  const records = await prisma.attendanceRecord.findMany({
+    where: { facilitatorId: { in: [req.instructor.id, req.user.id] } },
+    orderBy: { updatedAt: 'desc' },
+  });
+  return sendSuccess(res, records);
+}
+
+export async function upsertInstructorAttendanceRecord(req, res) {
+  const payload = req.body || {};
+  const id = payload.id || `atr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  if (!payload.studentId || !payload.sessionId || !payload.status) {
+    return sendError(res, 'studentId, sessionId, and status are required.', 400);
+  }
+  const existing = await prisma.attendanceRecord.findFirst({
+    where: {
+      studentId: payload.studentId,
+      sessionId: payload.sessionId,
+    },
+  });
+  let record;
+  if (existing) {
+    record = await prisma.attendanceRecord.update({
+      where: { id: existing.id },
+      data: { status: payload.status, updatedAt: new Date() },
+    });
+  } else {
+    record = await prisma.attendanceRecord.create({
+      data: {
+        id,
+        studentId: payload.studentId,
+        sessionId: payload.sessionId,
+        status: payload.status,
+        facilitatorId: req.instructor.id,
+        updatedAt: new Date(),
+        createdAt: new Date(),
+      },
+    });
+  }
+  return sendSuccess(res, record, 201);
 }

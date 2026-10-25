@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
 
 datasource db {
@@ -400,6 +401,7 @@ model Enrollment {
   updatedAt   DateTime         @updatedAt
 
   @@unique([studentId, componentId, sectionId])
+  @@index([studentId])
   @@index([componentId])
   @@index([sectionId])
   @@map("enrollment")
@@ -446,6 +448,7 @@ model Grade {
   @@index([assignmentId])
   @@index([examId])
   @@index([componentId])
+  @@index([isReleased])
   @@index([schoolYear, semester, isReleased])
   @@unique([studentId, componentId, schoolYear, semester])
   @@map("grade")
@@ -483,6 +486,8 @@ model PendingRegistration {
   rejectedAt           DateTime?
   createdAt            DateTime           @default(now())
 
+  @@index([status, createdAt])
+  @@index([email])
   @@map("pending_registration")
 }
 
@@ -559,6 +564,9 @@ model TrainingGroup {
   sourceDocument     String?
   createdAt          DateTime @default(now())
 
+  @@index([schoolYear, semester])
+  @@index([component])
+  @@index([facilitatorId])
   @@map("training_group")
 }
 
@@ -571,6 +579,9 @@ model AttendanceRecord {
   updatedAt     DateTime @default(now())
   createdAt     DateTime @default(now())
 
+  @@index([sessionId])
+  @@index([studentId])
+  @@index([facilitatorId])
   @@map("attendance_record")
 }
 
@@ -581,6 +592,8 @@ model AttendanceSession {
   title         String
   createdAt     DateTime @default(now())
 
+  @@index([facilitatorId])
+  @@index([date])
   @@map("attendance_session")
 }
 
@@ -598,6 +611,9 @@ model QualifyingExamResult {
   status             String?
   adminOverride      Boolean?
 
+  @@index([userId])
+  @@index([preferredComponent])
+  @@index([status])
   @@map("qualifying_exam_result")
 }
 
@@ -619,6 +635,9 @@ model AuditLogEntry {
   at        DateTime @default(now())
   createdAt DateTime @default(now())
 
+  @@index([actor])
+  @@index([action])
+  @@index([at])
   @@map("audit_log_entry")
 }
 

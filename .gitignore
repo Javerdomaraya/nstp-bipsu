@@ -16,3 +16,4 @@ coverage/
 .opencode/
 # Temporary FUSE files
 .fuse_hidden*
+.neon

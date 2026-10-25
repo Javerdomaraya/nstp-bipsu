@@ -18,6 +18,36 @@ type Notice = {
 
 const NOTICE_KEY = 'nstp-system-notices';
 
+const DEFAULT_DEMO_NOTICES: Notice[] = [
+  {
+    id: 'notice-admin-001',
+    title: 'Welcome to BiPSU NSTP Academic Year 2025-2026',
+    message: 'The Office of the National Service Training Program welcomes all enrolled first-year students to the CWTS, LTS, and MTS components. Please check your assigned training groups and orientation schedule.',
+    audience: 'all',
+    priority: 'high',
+    createdBy: 'Dr. Reynold G. Bustillo (NSTP Director)',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
+  },
+  {
+    id: 'notice-admin-002',
+    title: 'Facilitators Coordination Meeting & Immersion Briefing',
+    message: 'All designated CWTS and MTS facilitators are requested to attend the coordination meeting regarding municipal outreach deployment plans and CHED documentation standards.',
+    audience: 'facilitator',
+    priority: 'high',
+    createdBy: 'Dr. Reynold G. Bustillo (NSTP Director)',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
+  },
+  {
+    id: 'notice-inst-001',
+    title: 'CWTS Field Immersion & First Aid Drill Preparation',
+    message: 'All CWTS Section 1A and 1B students are required to wear proper NSTP shirts and bring hydration bottles for this Saturday disaster risk simulation workshop.',
+    audience: 'student',
+    priority: 'normal',
+    createdBy: 'Engr. Juan Dela Cruz (CWTS Facilitator)',
+    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
+  },
+];
+
 export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser }) {
   const [notices, setNotices] = useState<Notice[]>([]);
   const [query, setQuery] = useState('');
@@ -31,8 +61,14 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
   const [readIds, setReadIds] = useState<string[]>([]);
 
   useEffect(() => {
-    const savedNotices = safeJsonParse<Notice[]>(localStorage.getItem(NOTICE_KEY), []);
-    setNotices(savedNotices || []);
+    const rawNotices = localStorage.getItem(NOTICE_KEY);
+    const savedNotices = safeJsonParse<Notice[]>(rawNotices, []);
+    if (!savedNotices || savedNotices.length === 0) {
+      localStorage.setItem(NOTICE_KEY, JSON.stringify(DEFAULT_DEMO_NOTICES));
+      setNotices(DEFAULT_DEMO_NOTICES);
+    } else {
+      setNotices(savedNotices);
+    }
 
     const savedReads = safeJsonParse<string[]>(localStorage.getItem(readKey), []);
     setReadIds(savedReads || []);

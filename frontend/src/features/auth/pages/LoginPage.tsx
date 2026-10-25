@@ -7,6 +7,8 @@ import {
   BookOpen,
   CalendarDays,
   CheckCircle,
+  ChevronLeft,
+  ChevronRight,
   ClipboardList,
   Cloud,
   Download,
@@ -32,6 +34,7 @@ import {
   SunMedium,
   TrendingUp,
   Users,
+  X,
 } from 'lucide-react';
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
 import { BIPSU_PROGRAMS, INDUSTRIAL_TECHNOLOGY_MAJORS, INDUSTRIAL_TECHNOLOGY_PROGRAM, SECONDARY_EDUCATION_MAJORS, SECONDARY_EDUCATION_PROGRAM, YEAR_LEVEL_OPTIONS } from '../../../data/nstpData';
@@ -40,16 +43,17 @@ import { apiPost } from '../../../services/apiClient';
 import { normalizeAuthenticatedUser, type AuthenticatedUser } from '../../../services/authUser';
 import { fetchProvinces, fetchMunicipalities, type Province, type Municipality } from '../../../services/api';
 import BarangaySearch from '../components/BarangaySearch';
+import { DEMO_ACCOUNTS, DEMO_PASSWORD, findDemoAccount } from '../../../data/demoAccounts';
 
 type LoginMode = 'login' | 'register';
 type PublicView = 'home' | 'nstp' | 'school' | 'portal' | 'feature' | 'preview';
 
 const componentCards = [
-  { label: 'CWTS', title: 'Civic Welfare Training Service', copy: 'Community development, health, environment, disaster readiness, and service-learning projects.', color: 'from-emerald-500 to-teal-500', fill: '#10b981', value: 34 },
-  { label: 'CWTS (Coast Guard)', title: 'Civic Welfare Training Service - Coast Guard', copy: 'Coastal defense, maritime safety, search and rescue, and community service along Philippine waters.', color: 'from-cyan-500 to-sky-600', fill: '#06b6d4', value: 20 },
-  { label: 'LTS', title: 'Literacy Training Service', copy: 'Literacy, numeracy, tutoring, and learning support for partner schools and communities.', color: 'from-blue-600 to-cyan-500', fill: '#2563eb', value: 28 },
-  { label: 'MTS Army', title: 'Military Training Service - Army', copy: 'Discipline, leadership, physical readiness, and national defense preparation.', color: 'from-amber-500 to-orange-600', fill: '#f59e0b', value: 22 },
-  { label: 'MTS Navy', title: 'Military Training Service - Navy', copy: 'Maritime awareness, coastal service, naval discipline, and emergency coordination.', color: 'from-indigo-500 to-violet-600', fill: '#6366f1', value: 16 },
+  { label: 'CWTS', title: 'Civic Welfare Training Service', copy: 'Community development, health, environment, disaster readiness, and service-learning projects.', color: 'from-emerald-500 to-teal-500', fill: '#10b981', value: 32 },
+  { label: 'CWTS (Coast Guard)', title: 'Civic Welfare Training Service - Coast Guard', copy: 'Coastal defense, maritime safety, search and rescue, and community service along Philippine waters.', color: 'from-cyan-500 to-sky-600', fill: '#06b6d4', value: 14 },
+  { label: 'LTS', title: 'Literacy Training Service', copy: 'Literacy, numeracy, tutoring, and learning support for partner schools and communities.', color: 'from-blue-600 to-cyan-500', fill: '#2563eb', value: 26 },
+  { label: 'MTS Army', title: 'Military Training Service - Army', copy: 'Discipline, leadership, physical readiness, and national defense preparation.', color: 'from-amber-500 to-orange-600', fill: '#f59e0b', value: 18 },
+  { label: 'MTS Navy', title: 'Military Training Service - Navy', copy: 'Maritime awareness, coastal service, naval discipline, and emergency coordination.', color: 'from-indigo-500 to-violet-600', fill: '#6366f1', value: 10 },
 ];
 
 const landingComponents = [
@@ -246,8 +250,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [provincesLoading, setProvincesLoading] = useState(false);
   const [provincialAddress, setProvincialAddress] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(DEMO_ACCOUNTS.student.identifier);
+  const [password, setPassword] = useState(DEMO_PASSWORD);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -285,6 +289,23 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     }, 2600);
     return () => window.clearInterval(timer);
   }, [publicView]);
+
+  useEffect(() => {
+    if (!showAuth && !mobileMenuOpen) return;
+    const originalOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (showAuth) setShowAuth(false);
+        if (mobileMenuOpen) setMobileMenuOpen(false);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showAuth, mobileMenuOpen]);
 
   useEffect(() => {
     setProvincesLoading(true);
@@ -330,12 +351,29 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     showPublicView('preview', portalFeatures[0].label, 'overview-carousel');
   };
 
-  const openAuth = (nextMode: LoginMode = 'login') => {
+  const selectDemoRole = (role: 'student' | 'facilitator' | 'coordinator' | 'admin') => {
+    setLoginRole(role);
+    const demo = DEMO_ACCOUNTS[role];
+    if (demo) {
+      setEmail(demo.identifier);
+      setPassword(DEMO_PASSWORD);
+    }
+    setError(null);
+  };
+
+  const openAuth = (nextMode: LoginMode = 'login', initialRole: 'student' | 'facilitator' | 'coordinator' | 'admin' = 'student') => {
     setMode(nextMode);
     setShowAuth(true);
     setError(null);
     setNotice(null);
-    setLoginRole('student');
+    if (nextMode === 'login') {
+      selectDemoRole(initialRole);
+    } else {
+      setLoginRole(initialRole);
+      setEmail('');
+      setPassword('');
+      setConfirmPassword('');
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -461,10 +499,16 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     }
 
     const loginInput = email.trim();
+    if (!loginInput || !password) {
+      setError(`Please enter your ${loginRole === 'student' ? 'Student ID' : 'email'} and password.`);
+      return;
+    }
+
+    const matchedDemo = findDemoAccount(loginInput, loginRole);
 
     // Try backend login first (retry once if backend was restarting)
     let apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>('/auth/login', { identifier: loginInput, password }, null);
-    if (apiResult === null) {
+    if (apiResult === null && !matchedDemo) {
       await new Promise((resolve) => setTimeout(resolve, 1500));
       apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>('/auth/login', { identifier: loginInput, password }, null);
     }
@@ -494,6 +538,13 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       return;
     }
 
+    // Demo account instant fallback: ensures all 4 demo accounts always log in seamlessly
+    if (matchedDemo && password === DEMO_PASSWORD) {
+      setPassword('');
+      onLogin(matchedDemo);
+      return;
+    }
+
     if (apiResult === null) {
       setError('Cannot reach the server. Please check your connection and try again.');
       return;
@@ -510,16 +561,16 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   return (
     <div className="landing-page min-h-screen bg-[#edf5fb] text-[#061a42] dark:bg-[#08111f] dark:text-slate-100">
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#061f4f] text-white shadow-[0_10px_30px_-20px_rgba(2,6,23,0.8)]">
-        <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-2 px-3 py-3 sm:gap-4 sm:px-5 lg:px-12">
-          <button onClick={() => showPublicView('home')} className="flex min-w-0 items-center gap-2 text-left sm:gap-4">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm sm:h-14 sm:w-14 sm:rounded-2xl sm:p-1.5">
+        <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-2 px-3 py-2.5 sm:gap-4 sm:px-5 sm:py-3 lg:px-12">
+          <button onClick={() => showPublicView('home')} className="flex min-w-0 items-center gap-2 text-left sm:gap-3.5">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm sm:h-13 sm:w-13 sm:rounded-2xl sm:p-1.5">
               <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
             </span>
-            <span className="flex min-w-0 items-center gap-3 sm:gap-4">
-              <span className="font-brand hidden border-r border-white/40 pr-5 text-3xl font-semibold tracking-tight sm:block">BiPSU</span>
-              <span>
-                <span className="font-portal block text-base font-semibold uppercase leading-tight tracking-[0.14em] sm:text-2xl sm:tracking-[0.22em]">NSTP Portal</span>
-                <span className="block max-w-[9rem] text-[10px] font-bold uppercase leading-tight tracking-[0.06em] text-white/82 sm:max-w-none sm:text-xs">National Service Training Program</span>
+            <span className="flex min-w-0 items-center gap-2.5 sm:gap-4">
+              <span className="font-brand hidden border-r border-white/40 pr-4 text-2xl font-semibold tracking-tight sm:block sm:text-3xl sm:pr-5">BiPSU</span>
+              <span className="min-w-0">
+                <span className="font-portal block truncate text-sm font-semibold uppercase leading-tight tracking-[0.14em] sm:text-xl sm:tracking-[0.22em] lg:text-2xl">NSTP Portal</span>
+                <span className="block truncate text-[10px] font-bold uppercase leading-tight tracking-[0.05em] text-white/80 sm:text-xs">National Service Training Program</span>
               </span>
             </span>
           </button>
@@ -541,26 +592,36 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
             ))}
           </nav>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
-              className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-blue-300/70 bg-white/5 px-3 py-2 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/12 sm:gap-2 sm:px-4 sm:py-2.5 sm:text-sm"
+              className="inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl border border-blue-300/70 bg-white/5 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/12 sm:w-auto sm:gap-2 sm:px-3.5 sm:py-2.5 sm:text-sm"
               aria-label="Toggle landing page theme"
             >
               {themeMode === 'dark' ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
               <span className="hidden sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
             </button>
-            <button onClick={() => openAuth('login')} className="inline-flex min-h-10 items-center justify-center gap-1.5 rounded-xl border border-blue-300/70 bg-white/5 px-3 py-2 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/12 sm:gap-2 sm:px-4 sm:py-2.5 sm:text-sm">
+            <button
+              onClick={() => openAuth('login')}
+              className="inline-flex h-9 sm:min-h-10 items-center justify-center gap-1.5 rounded-xl border border-blue-300/70 bg-white/10 px-2.5 py-1.5 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/20 sm:gap-2 sm:px-4 sm:py-2.5 sm:text-sm"
+            >
               <LockKeyhole className="h-4 w-4" />
-              <span className="hidden min-[390px]:inline">Secure </span>Login
+              <span>Login</span>
             </button>
-            <button onClick={() => setMobileMenuOpen((open) => !open)} className="inline-flex h-11 w-11 items-center justify-center rounded-xl border border-white/20 text-white lg:hidden" aria-label="Open menu">
-              <Menu className="h-5 w-5" />
+            <button
+              onClick={() => setMobileMenuOpen((open) => !open)}
+              className="inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl border border-white/20 text-white hover:bg-white/10 lg:hidden"
+              aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileMenuOpen}
+            >
+              {mobileMenuOpen ? <X className="h-4 w-4 sm:h-5 sm:w-5" /> : <Menu className="h-4 w-4 sm:h-5 sm:w-5" />}
             </button>
           </div>
         </div>
+
+        {/* Mobile Navigation Drawer with Overlay */}
         {mobileMenuOpen && (
-          <div className="border-t border-white/10 bg-[#08275d] px-5 py-3 lg:hidden">
+          <div className="fixed inset-0 top-[52px] sm:top-[57px] z-50 flex flex-col bg-[#051c44]/95 p-5 backdrop-blur-md lg:hidden">
             <div className="grid gap-2">
               {[
                 ['nstp', 'About NSTP'],
@@ -570,8 +631,11 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
               ].map(([id, label]) => (
                 <button
                   key={label}
-                  onClick={() => showPublicView(id as PublicView)}
-                  className="rounded-xl px-3 py-3 text-left text-sm font-semibold uppercase tracking-tight text-white/90 hover:bg-white/10"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    showPublicView(id as PublicView);
+                  }}
+                  className="rounded-xl border border-white/10 bg-white/5 px-4 py-3.5 text-left text-sm font-semibold uppercase tracking-wide text-white hover:bg-white/15"
                 >
                   {label}
                 </button>
@@ -581,55 +645,67 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                   setMobileMenuOpen(false);
                   openAuth('register');
                 }}
-                className="rounded-xl bg-[#ffd24d] px-3 py-3 text-left text-sm font-semibold uppercase tracking-tight text-[#061a42]"
+                className="mt-2 rounded-xl bg-[#ffd24d] px-4 py-3.5 text-center text-sm font-bold uppercase tracking-wider text-[#061a42] shadow-md hover:bg-[#ffe17d]"
               >
                 Request Student Access
               </button>
             </div>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="mt-auto inline-flex items-center justify-center gap-2 rounded-xl border border-white/20 py-3 text-xs font-semibold uppercase text-white/80 hover:bg-white/10"
+            >
+              <X className="h-4 w-4" />
+              Close Menu
+            </button>
           </div>
         )}
       </header>
 
       <main className="overflow-x-hidden">
-        <section className="relative isolate min-h-[calc(100svh-5rem)] overflow-hidden bg-[#f7fbff] dark:bg-[#07111f]">
+        <section className="relative isolate min-h-[calc(100svh-4.5rem)] overflow-hidden bg-[#f7fbff] dark:bg-[#07111f]">
           <div
-            className="absolute inset-0 bg-cover bg-center opacity-[0.16] saturate-[0.85] dark:opacity-[0.18] dark:saturate-[0.72]"
+            className="absolute inset-0 bg-cover bg-center opacity-[0.16] saturate-[0.85] dark:opacity-[0.18] dark:saturate-[0.72] pointer-events-none"
             style={{ backgroundImage: `url(${splashImage})` }}
           />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(255,255,255,0.98)_0%,rgba(255,255,255,0.92)_34%,rgba(237,246,255,0.76)_62%,rgba(214,233,248,0.88)_100%)] dark:bg-[radial-gradient(circle_at_50%_24%,rgba(15,34,65,0.94)_0%,rgba(7,17,31,0.9)_42%,rgba(5,13,27,0.96)_100%)]" />
-          <div className="absolute left-[-7rem] top-[-7rem] h-80 w-80 rounded-full border border-blue-200/70 dark:border-blue-300/12" />
-          <div className="absolute left-[-5rem] top-[-3rem] h-72 w-72 rounded-full border border-blue-200/50 dark:border-blue-300/10" />
-          <div className="absolute right-0 top-0 h-64 w-64 bg-[radial-gradient(circle,rgba(11,78,162,0.08)_1.5px,transparent_1.5px)] [background-size:14px_14px] dark:bg-[radial-gradient(circle,rgba(147,197,253,0.13)_1.5px,transparent_1.5px)]" />
-          <div className="absolute inset-x-0 bottom-0 h-24 bg-[#06245c]" />
-          <div className="absolute bottom-0 left-0 h-24 w-[72%] rounded-tr-[100%] bg-[#06245c]" />
-          <div className="absolute bottom-0 right-0 h-24 w-[42%] rounded-tl-[100%] bg-[#f2b705]" />
-          <div className="absolute bottom-0 left-[42%] h-12 w-[38%] rounded-t-[100%] bg-[#0b4ea2]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(255,255,255,0.98)_0%,rgba(255,255,255,0.92)_34%,rgba(237,246,255,0.76)_62%,rgba(214,233,248,0.88)_100%)] dark:bg-[radial-gradient(circle_at_50%_24%,rgba(15,34,65,0.94)_0%,rgba(7,17,31,0.9)_42%,rgba(5,13,27,0.96)_100%)] pointer-events-none" />
+          <div className="absolute left-[-7rem] top-[-7rem] h-80 w-80 rounded-full border border-blue-200/70 dark:border-blue-300/12 pointer-events-none" />
+          <div className="absolute left-[-5rem] top-[-3rem] h-72 w-72 rounded-full border border-blue-200/50 dark:border-blue-300/10 pointer-events-none" />
+          <div className="absolute right-0 top-0 h-64 w-64 bg-[radial-gradient(circle,rgba(11,78,162,0.08)_1.5px,transparent_1.5px)] [background-size:14px_14px] dark:bg-[radial-gradient(circle,rgba(147,197,253,0.13)_1.5px,transparent_1.5px)] pointer-events-none" />
 
-          <div className="relative mx-auto flex min-h-[calc(100svh-5rem)] max-w-5xl flex-col items-center justify-center px-5 pb-32 pt-10 text-center sm:px-8">
-            <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-24 w-24 rounded-full bg-white/90 p-2 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.55)] ring-1 ring-blue-100 dark:bg-white dark:ring-blue-300/30 sm:h-32 sm:w-32" />
-            <p className="mt-6 text-xs font-semibold uppercase tracking-[0.42em] text-[#0b4ea2] dark:text-blue-200 sm:text-sm">
+          {/* Smooth bottom transition */}
+          <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-[#edf5fb] to-transparent dark:from-[#08111f] dark:to-transparent sm:h-24 pointer-events-none" />
+          <div className="hidden sm:block absolute inset-x-0 bottom-0 h-24 bg-[#06245c] pointer-events-none" />
+          <div className="hidden sm:block absolute bottom-0 left-0 h-24 w-[72%] rounded-tr-[100%] bg-[#06245c] pointer-events-none" />
+          <div className="hidden sm:block absolute bottom-0 right-0 h-24 w-[42%] rounded-tl-[100%] bg-[#f2b705] pointer-events-none" />
+          <div className="hidden sm:block absolute bottom-0 left-[42%] h-12 w-[38%] rounded-t-[100%] bg-[#0b4ea2] pointer-events-none" />
+
+          <div className="relative mx-auto flex min-h-[calc(100svh-4.5rem)] max-w-5xl flex-col items-center justify-center px-4 pb-16 pt-8 text-center sm:px-8 sm:pb-28 sm:pt-12">
+            <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-20 w-20 rounded-full bg-white/90 p-1.5 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.55)] ring-1 ring-blue-100 dark:bg-white dark:ring-blue-300/30 sm:h-28 sm:w-28 sm:p-2" />
+            <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0b4ea2] dark:text-blue-200 sm:mt-6 sm:text-xs sm:tracking-[0.28em] md:text-sm md:tracking-[0.38em]">
               Biliran Province State University
             </p>
-            <span className="mt-5 h-1 w-12 rounded-full bg-[#f2b705]" />
-            <h1 className="mt-6 font-portal text-5xl font-semibold leading-none tracking-tight text-[#12366f] dark:text-white sm:text-7xl lg:text-8xl">
+            <span className="mt-3.5 h-1 w-10 rounded-full bg-[#f2b705] sm:mt-5 sm:w-12" />
+            <h1 className="mt-4 font-portal text-4xl font-semibold leading-none tracking-tight text-[#12366f] dark:text-white sm:mt-6 sm:text-6xl lg:text-7xl">
               Welcome
             </h1>
-            <p className="mt-5 max-w-2xl text-lg font-medium leading-8 text-slate-600 dark:text-slate-300 sm:text-2xl">
+            <p className="mt-3.5 max-w-2xl text-base font-medium leading-relaxed text-slate-600 dark:text-slate-300 sm:mt-5 sm:text-xl lg:text-2xl">
               NSTP Portal for Brilliance, Innovation, Progress, Service and Unity
             </p>
 
-            <div className="mt-8 grid w-full max-w-md grid-cols-3 gap-3 sm:mt-10 sm:max-w-xl sm:gap-5">
+            <div className="mt-6 grid w-full max-w-sm grid-cols-3 gap-2.5 sm:mt-8 sm:max-w-md sm:gap-4" role="tablist" aria-label="NSTP components">
               {landingComponents.map((component) => (
                 <button
                   key={component.key}
+                  role="tab"
+                  aria-selected={selectedLandingComponent === component.key}
                   onClick={() => setSelectedLandingComponent(component.key)}
-                  className={`rounded-full border px-4 py-3 text-sm font-semibold tracking-wide shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md dark:hover:bg-slate-900 sm:px-7 sm:py-4 sm:text-lg ${
+                  className={`rounded-full border px-3 py-2.5 text-sm font-semibold tracking-wide shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white hover:shadow-md dark:hover:bg-slate-900 sm:px-6 sm:py-3.5 sm:text-base ${
                     selectedLandingComponent === component.key
                       ? component.key === 'MTS'
-                        ? 'border-[#f2b705] bg-[#f2b705]/12 text-[#b77900] dark:bg-[#f2b705]/15 dark:text-amber-100'
-                        : 'border-blue-500 bg-blue-50 text-blue-800 dark:border-blue-300/60 dark:bg-blue-500/15 dark:text-blue-100'
+                        ? 'border-[#f2b705] bg-[#f2b705]/15 text-[#b77900] ring-2 ring-[#f2b705]/40 dark:bg-[#f2b705]/20 dark:text-amber-100'
+                        : 'border-blue-500 bg-blue-50 text-blue-800 ring-2 ring-blue-500/30 dark:border-blue-300/60 dark:bg-blue-500/20 dark:text-blue-100'
                       : component.key === 'MTS'
-                      ? 'border-[#f2b705] bg-white/70 text-[#c48600] dark:bg-slate-950/55 dark:text-amber-200'
+                      ? 'border-[#f2b705]/60 bg-white/70 text-[#c48600] dark:bg-slate-950/55 dark:text-amber-200'
                       : 'border-blue-300 bg-white/70 text-blue-700 dark:border-blue-400/40 dark:bg-slate-950/55 dark:text-blue-100'
                   }`}
                 >
@@ -638,15 +714,15 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
               ))}
             </div>
 
-            <div className="mt-6 w-full max-w-2xl rounded-3xl border border-blue-100 bg-white/72 p-5 text-left shadow-[0_18px_48px_-36px_rgba(15,23,42,0.5)] backdrop-blur dark:border-blue-300/15 dark:bg-slate-950/62">
+            <div className="mt-5 w-full max-w-2xl rounded-2xl border border-blue-100 bg-white/80 p-4 text-left shadow-[0_18px_48px_-36px_rgba(15,23,42,0.5)] backdrop-blur dark:border-blue-300/15 dark:bg-slate-950/70 sm:rounded-3xl sm:p-6">
               {landingComponents.filter((component) => component.key === selectedLandingComponent).map((component) => (
                 <div key={component.key}>
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">{component.key} component</p>
-                  <h2 className="mt-1 text-xl font-semibold text-[#12366f] dark:text-white">{component.title}</h2>
-                  <p className="mt-2 text-sm leading-6 text-slate-600 dark:text-slate-300">{component.copy}</p>
-                  <div className="mt-4 grid gap-2 sm:grid-cols-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">{component.key} component</p>
+                  <h2 className="mt-1 text-lg font-semibold text-[#12366f] dark:text-white sm:text-xl">{component.title}</h2>
+                  <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300 sm:text-sm sm:leading-6">{component.copy}</p>
+                  <div className="mt-3.5 flex flex-wrap gap-2">
                     {component.focus.map((item) => (
-                      <span key={item} className="rounded-2xl border border-slate-200 bg-white/80 px-3 py-2 text-center text-xs font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200">
+                      <span key={item} className="rounded-full border border-slate-200 bg-white/90 px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-200">
                         {item}
                       </span>
                     ))}
@@ -655,32 +731,32 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
               ))}
             </div>
 
-            <div className="mt-5 flex w-full max-w-2xl flex-col items-center gap-3">
-              <div className="grid w-full gap-3 sm:grid-cols-2">
-                <button onClick={() => openAuth('login')} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#073f9f] px-6 py-3 text-sm font-semibold text-white shadow-[0_18px_34px_-20px_rgba(7,63,159,0.9)] transition-all hover:-translate-y-0.5 hover:bg-[#052e77]">
+            <div className="mt-5 flex w-full max-w-md sm:max-w-xl flex-col items-center gap-3">
+              <div className="grid w-full gap-2.5 sm:grid-cols-2 sm:gap-4">
+                <button onClick={() => openAuth('login')} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl bg-[#073f9f] px-6 py-3 text-sm font-semibold text-white shadow-[0_14px_30px_-15px_rgba(7,63,159,0.85)] transition-all hover:-translate-y-0.5 hover:bg-[#052e77] active:translate-y-0">
                   <ShieldCheck className="h-5 w-5" />
                   Secure Login
                 </button>
-                <button onClick={watchOverview} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-white/80 px-6 py-3 text-sm font-semibold text-[#0b2d75] shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white dark:border-blue-400/30 dark:bg-slate-950/70 dark:text-blue-100 dark:hover:bg-slate-900">
+                <button onClick={watchOverview} className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-2xl border border-blue-200 bg-white/80 px-6 py-3 text-sm font-semibold text-[#0b2d75] shadow-sm backdrop-blur transition-all hover:-translate-y-0.5 hover:bg-white active:translate-y-0 dark:border-blue-400/30 dark:bg-slate-950/70 dark:text-blue-100 dark:hover:bg-slate-900">
                   <PlayCircle className="h-4 w-4" />
                   Watch Overview
                 </button>
               </div>
             </div>
 
-            <div className="mt-10 grid w-full max-w-3xl gap-4 text-sm text-[#1f3760] dark:text-slate-300 sm:grid-cols-3">
+            <div className="mt-8 grid w-full max-w-2xl grid-cols-3 gap-2 text-center text-xs text-[#1f3760] dark:text-slate-300 sm:gap-4 sm:text-sm">
               {[
-                [ShieldCheck, 'BiPSU blue and gold identity'],
+                [ShieldCheck, 'Blue & gold identity'],
                 [IdCard, 'Student ID verification'],
-                [GraduationCap, 'Grades and clearance portal'],
+                [GraduationCap, 'Grades & clearance'],
               ].map(([Icon, label]) => {
                 const ItemIcon = Icon as typeof ShieldCheck;
                 return (
-                  <div key={label as string} className="flex flex-col items-center gap-3 border-blue-100/80 px-4 dark:border-blue-300/15 sm:border-r sm:last:border-r-0">
-                    <span className="grid h-14 w-14 place-items-center rounded-full bg-blue-50 text-blue-800 ring-1 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-100 dark:ring-blue-300/20">
-                      <ItemIcon className="h-6 w-6" />
+                  <div key={label as string} className="flex flex-col items-center gap-2 rounded-xl p-2 sm:border-r sm:border-blue-100/80 sm:last:border-r-0 dark:sm:border-blue-300/15">
+                    <span className="grid h-10 w-10 place-items-center rounded-full bg-blue-50 text-blue-800 ring-1 ring-blue-100 dark:bg-blue-500/10 dark:text-blue-100 dark:ring-blue-300/20 sm:h-12 sm:w-12">
+                      <ItemIcon className="h-5 w-5 sm:h-6 sm:w-6" />
                     </span>
-                    <span className="font-medium leading-5">{label as string}</span>
+                    <span className="font-medium leading-tight">{label as string}</span>
                   </div>
                 );
               })}
@@ -688,23 +764,23 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
           </div>
         </section>
 
-        <section className="relative z-10 mx-auto mt-5 max-w-[1460px] px-4 sm:-mt-10 sm:px-5 lg:px-9">
-          <div className="grid overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_22px_56px_-34px_rgba(15,23,42,0.55)] sm:grid-cols-2 lg:grid-cols-6">
+        <section className="relative z-10 mx-auto mt-4 max-w-[1460px] px-3 sm:-mt-10 sm:px-5 lg:px-9">
+          <div className="grid grid-cols-2 gap-2.5 overflow-hidden rounded-2xl border border-slate-200 bg-white p-2.5 shadow-[0_22px_56px_-34px_rgba(15,23,42,0.55)] dark:border-slate-800 dark:bg-slate-900 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6 lg:p-0">
             {portalFeatures.map((feature) => {
               const Icon = feature.icon;
               return (
                 <button
                   key={feature.label}
                   onClick={() => showPublicView('feature', feature.label)}
-                  className="group flex min-h-[9.25rem] flex-col items-center justify-start border-b border-slate-200 px-4 py-5 text-center hover:bg-blue-50 sm:px-5 sm:py-6 lg:min-h-[12rem] lg:border-b-0 lg:border-r lg:px-6 lg:py-8"
+                  className="group flex flex-col items-center justify-between rounded-xl border border-slate-100 p-3 text-center transition-all hover:bg-blue-50/70 hover:shadow-sm dark:border-slate-800/80 dark:hover:bg-slate-800/50 sm:p-4 lg:min-h-[12rem] lg:rounded-none lg:border-0 lg:border-r lg:border-slate-200 lg:p-6 lg:dark:border-slate-800"
                 >
-                  <span className={`mb-3 grid h-12 w-12 shrink-0 place-items-center rounded-full bg-gradient-to-br ${feature.color} text-white shadow-lg shadow-slate-900/10 sm:h-14 sm:w-14 lg:mb-4`}>
-                    <Icon className="h-6 w-6 sm:h-7 sm:w-7" />
+                  <span className={`mb-2 grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-gradient-to-br ${feature.color} text-white shadow-md shadow-slate-900/10 sm:h-12 sm:w-12 sm:rounded-2xl lg:mb-4 lg:h-14 lg:w-14`}>
+                    <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                   </span>
-                  <span className="text-sm font-semibold leading-tight text-[#061a42] sm:text-base">{feature.label}</span>
-                  <span className="mt-2 text-xs leading-5 text-[#30476d] sm:text-sm">{feature.value}</span>
-                  <span className="mt-3 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-semibold text-slate-600 group-hover:border-blue-200 group-hover:bg-white">
-                    {feature.metric} • {feature.status}
+                  <span className="text-xs font-semibold leading-tight text-[#061a42] dark:text-slate-100 sm:text-sm">{feature.label}</span>
+                  <span className="mt-1 line-clamp-2 text-[11px] leading-4 text-[#30476d] dark:text-slate-300 sm:text-xs">{feature.value}</span>
+                  <span className="mt-2.5 inline-block rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-semibold text-slate-600 group-hover:border-blue-200 group-hover:bg-white dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 sm:text-[11px]">
+                    {feature.metric}
                   </span>
                 </button>
               );
@@ -749,27 +825,27 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                 </div>
               </section>
 
-              <section className="p-6 md:p-10">
-                <div className="mb-6 flex items-start justify-between gap-3">
+              <section className="p-4 sm:p-6 md:p-10">
+                <div className="mb-5 flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <div className="mb-3 flex items-center gap-2 lg:hidden">
-                      <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-11 w-11 rounded-xl border border-blue-100 bg-white p-1" />
-                      <img src="/nstp-logo.svg" alt="NSTP logo" className="h-11 w-11 rounded-xl border border-blue-100 bg-white p-1" />
+                    <div className="mb-2.5 flex items-center gap-2 lg:hidden">
+                      <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
+                      <img src="/nstp-logo.svg" alt="NSTP logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
                     </div>
                     <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Portal Access</p>
-                    <h2 className="mt-1 text-2xl font-semibold text-slate-900 dark:text-slate-100">{mode === 'login' ? 'Sign in to continue' : 'Request student access'}</h2>
-                    <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100 sm:text-2xl">{mode === 'login' ? 'Sign in to continue' : 'Request student access'}</h2>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 sm:text-sm">
                       {mode === 'login'
                         ? 'Access modules, assessments, grades, announcements, reports, and enrollment tools.'
                         : 'Use your BiPSU student ID. Admin approval is required before login.'}
                     </p>
                   </div>
-                  <button onClick={() => setShowAuth(false)} className="rounded-full border border-slate-200 px-3 py-1.5 text-sm font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800">
+                  <button onClick={() => setShowAuth(false)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 sm:text-sm">
                     Close
                   </button>
                 </div>
 
-                <div className="mb-6 inline-flex rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
+                <div className="mb-5 inline-flex rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
                   {(['login', 'register'] as LoginMode[]).map((item) => (
                     <button
                       key={item}
@@ -777,11 +853,15 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                       onClick={() => {
                         setMode(item);
                         setError(null);
-                        setEmail('');
-                        setPassword('');
-                        setConfirmPassword('');
+                        if (item === 'login') {
+                          selectDemoRole(loginRole);
+                        } else {
+                          setEmail('');
+                          setPassword('');
+                          setConfirmPassword('');
+                        }
                       }}
-                      className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${mode === item ? 'bg-blue-700 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors sm:text-sm ${mode === item ? 'bg-blue-700 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}
                     >
                       {item === 'login' ? 'Login' : 'Register'}
                     </button>
@@ -793,7 +873,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
 
                 <form onSubmit={handleSubmit} className="grid gap-4">
                   {mode === 'register' && (
-                    <div className="max-h-[58vh] space-y-5 overflow-y-auto pr-1">
+                    <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 sm:max-h-[65vh]">
                       <FormSection title="Student Information">
                         <Field label="BiPSU Student ID" icon={IdCard} value={studentId} onChange={setStudentId} placeholder="2026-0000" required />
                         <Field label="Surname" value={surname} onChange={setSurname} placeholder="Dela Cruz" required />
@@ -910,15 +990,15 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                     </FormSection>
                   ) : (
                     <>
-                      <div className="flex gap-2">
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                         {(['student', 'facilitator', 'coordinator', 'admin'] as const).map((role) => (
                           <button
                             key={role}
                             type="button"
-                            onClick={() => { setLoginRole(role); setEmail(''); setPassword(''); }}
-                            className={`flex-1 rounded-xl px-3 py-2.5 text-center text-sm font-bold uppercase tracking-tight transition-colors ${
+                            onClick={() => selectDemoRole(role)}
+                            className={`rounded-xl px-2.5 py-2.5 text-center text-xs font-bold uppercase tracking-tight transition-colors sm:text-sm ${
                               loginRole === role
-                                ? 'bg-blue-700 text-white shadow-sm'
+                                ? 'bg-blue-700 text-white shadow-sm ring-2 ring-blue-500/20'
                                 : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
                             }`}
                           >
@@ -926,6 +1006,31 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           </button>
                         ))}
                       </div>
+
+                      {/* Demo Account Indicator Card */}
+                      <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/60 p-3.5 text-left dark:border-blue-900/50 dark:from-blue-950/40 dark:to-indigo-950/30">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-900 dark:text-blue-200">
+                            <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                            {DEMO_ACCOUNTS[loginRole].title}
+                          </span>
+                          <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
+                            {DEMO_ACCOUNTS[loginRole].badge}
+                          </span>
+                        </div>
+                        <div className="mt-1.5 flex items-center justify-between">
+                          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                            Account: <span className="font-semibold text-slate-900 dark:text-white">{DEMO_ACCOUNTS[loginRole].name}</span>
+                          </p>
+                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                            PW: {DEMO_PASSWORD}
+                          </span>
+                        </div>
+                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                          {DEMO_ACCOUNTS[loginRole].features[0]}
+                        </p>
+                      </div>
+
                       <Field
                         label={loginRole === 'student' ? 'Student ID' : 'Email'}
                         icon={Mail}
@@ -939,7 +1044,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                     </>
                   )}
 
-                  <button type="submit" className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3 font-semibold text-white shadow-sm ring-1 ring-blue-800/10 hover:bg-blue-800">
+                  <button type="submit" className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3 font-semibold text-white shadow-sm ring-1 ring-blue-800/10 hover:bg-blue-800 active:bg-blue-900">
                     {mode === 'login' ? 'Continue to Dashboard' : 'Submit Registration'}
                     <ArrowRight className="h-4 w-4" />
                   </button>
@@ -1088,32 +1193,84 @@ function TrustBand() {
   return (
     <section className="relative overflow-hidden bg-[#05275f] text-white">
       <div
-        className="absolute inset-y-0 right-0 w-[42%] bg-cover bg-center opacity-35"
+        className="absolute inset-y-0 right-0 w-[42%] bg-cover bg-center opacity-30 pointer-events-none"
         style={{ backgroundImage: `url(${splashImage})` }}
       />
-      <div className="absolute inset-0 bg-[linear-gradient(90deg,#05275f_0%,#07316e_60%,rgba(5,39,95,0.74)_100%)]" />
-      <div className="relative mx-auto grid max-w-[1540px] gap-8 px-5 py-9 lg:grid-cols-[1fr_auto] lg:px-12">
-        <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,#05275f_0%,#07316e_60%,rgba(5,39,95,0.85)_100%)] pointer-events-none" />
+      <div className="relative mx-auto grid max-w-[1540px] gap-8 px-4 py-8 sm:px-6 sm:py-10 lg:grid-cols-[1fr_auto] lg:px-12">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           {trustItems.map((item) => {
             const Icon = item.icon;
             return (
-              <div key={item.title} className="flex gap-4">
-                <span className="grid h-16 w-16 shrink-0 place-items-center rounded-2xl border border-blue-300/30 bg-white/8 text-blue-200">
-                  <Icon className="h-8 w-8" />
+              <div key={item.title} className="flex items-start gap-3 rounded-xl bg-white/5 p-3.5 backdrop-blur-sm sm:bg-transparent sm:p-0">
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-blue-300/30 bg-white/10 text-blue-200 sm:h-13 sm:w-13">
+                  <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
                 </span>
-                <span>
-                  <span className="block text-base font-semibold">{item.title}</span>
-                  <span className="mt-2 block text-sm leading-6 text-white/82">{item.copy}</span>
-                </span>
+                <div>
+                  <span className="block text-sm font-semibold sm:text-base">{item.title}</span>
+                  <span className="mt-1 block text-xs leading-5 text-white/80 sm:text-sm sm:leading-6">{item.copy}</span>
+                </div>
               </div>
             );
           })}
         </div>
-        <div className="self-end text-right">
-          <p className="text-3xl font-semibold">Serve. Learn. Excel.</p>
-          <p className="mt-2 text-xl font-semibold text-[#ffd24d]">#NSTPsaBiPSU</p>
+        <div className="border-t border-white/15 pt-4 text-center sm:text-left lg:border-t-0 lg:pt-0 lg:self-end lg:text-right">
+          <p className="text-2xl font-semibold sm:text-3xl">Serve. Learn. Excel.</p>
+          <p className="mt-1 text-lg font-semibold text-[#ffd24d] sm:text-xl">#NSTPsaBiPSU</p>
         </div>
       </div>
+
+      {/* Official Institutional University Footer */}
+      <footer className="border-t border-white/10 bg-[#031535] px-4 py-8 text-white/80 sm:px-6 sm:py-10 lg:px-12">
+        <div className="mx-auto grid max-w-[1540px] gap-8 text-xs sm:grid-cols-2 sm:text-sm lg:grid-cols-4">
+          <div>
+            <div className="mb-3 flex items-center gap-2.5">
+              <span className="h-9 w-9 rounded-lg bg-white p-1">
+                <img src="/bipsu-logo.png" alt="BiPSU" className="h-full w-full object-contain" />
+              </span>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-white">BiPSU NSTP Portal</p>
+                <p className="text-[10px] text-white/60">Republic of the Philippines</p>
+              </div>
+            </div>
+            <p className="text-xs leading-relaxed text-white/70">
+              Biliran Province State University — Directorate of the National Service Training Program. Implementing R.A. 9163 for civic consciousness and defense readiness.
+            </p>
+          </div>
+
+          <div>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-blue-200">Campus Address</p>
+            <p className="text-xs leading-relaxed text-white/70">
+              BiPSU Main Campus<br />
+              P.I. Garcia Street, Barangay San Roque<br />
+              Naval, Biliran Province, 6543 Philippines
+            </p>
+            <p className="mt-2 text-xs text-white/70">Office: Student Affairs & Services (SAS) Bldg.</p>
+          </div>
+
+          <div>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-blue-200">Official Tracks</p>
+            <ul className="space-y-1.5 text-xs text-white/70">
+              <li>• Civic Welfare Training Service (CWTS)</li>
+              <li>• CWTS Coast Guard Track</li>
+              <li>• Literacy Training Service (LTS)</li>
+              <li>• Military Training Service (MTS Army & Navy)</li>
+            </ul>
+          </div>
+
+          <div>
+            <p className="mb-3 text-xs font-bold uppercase tracking-wider text-blue-200">Inquiries & Governance</p>
+            <p className="text-xs leading-relaxed text-white/70">
+              Email: <span className="text-blue-300">nstp@bipsu.edu.ph</span><br />
+              Registrar: <span className="text-blue-300">registrar@bipsu.edu.ph</span><br />
+              Office Hours: Mon – Fri: 8:00 AM – 5:00 PM
+            </p>
+            <p className="mt-3 text-[11px] text-white/50">
+              © 2026 Biliran Province State University. All rights reserved.
+            </p>
+          </div>
+        </div>
+      </footer>
     </section>
   );
 }
@@ -1341,49 +1498,54 @@ function HomeSections({ onStart }: { onStart: () => void }) {
         <p className="section-copy">Students follow the Common Module, complete assessments, receive component classification, and view released grades. Coordinators manage enrollment approvals, modules, exams, reports, and interventions.</p>
       </Panel>
       <Panel className="lg:col-span-3">
-        <p className="eyebrow">Flow</p>
-        <div className="grid gap-3 sm:grid-cols-2">
+        <p className="eyebrow">Academic Workflow</p>
+        <div className="grid gap-2.5 sm:grid-cols-2">
           {['Student ID approval', 'Common Module', 'Post-module tests', 'Grade release'].map((item, index) => (
-            <div key={item} className="rounded-xl border border-slate-200 bg-white/75 p-4 dark:border-slate-700 dark:bg-slate-900/70">
-              <p className="text-2xl font-semibold text-blue-700 dark:text-blue-300">0{index + 1}</p>
-              <p className="mt-1 text-sm font-bold">{item}</p>
+            <div key={item} className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white/75 p-3.5 dark:border-slate-700 dark:bg-slate-900/70 sm:flex-col sm:items-start sm:p-4">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-50 font-bold text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-sm sm:h-auto sm:w-auto sm:bg-transparent sm:p-0 sm:text-2xl sm:font-semibold">
+                0{index + 1}
+              </span>
+              <p className="text-sm font-semibold text-slate-800 dark:text-slate-100">{item}</p>
             </div>
           ))}
         </div>
       </Panel>
       <Panel className="lg:col-span-6">
-        <div className="mb-5 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="eyebrow">NSTP components at the university</p>
             <h2 className="section-title">Official tracks students can enter after the Common Module.</h2>
           </div>
-          <span className="rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-xs font-semibold uppercase tracking-[0.14em] text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
-            CWTS | CWTS Coast Guard | LTS | MTS
+          <span className="inline-block self-start rounded-full border border-blue-200 bg-blue-50 px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.1em] text-blue-800 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200 sm:self-auto sm:text-xs">
+            CWTS | Coast Guard | LTS | MTS
           </span>
         </div>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+
+        {/* Mobile Horizontal Snap Carousel / Desktop Multi-Column Grid */}
+        <div className="flex snap-x snap-mandatory gap-3 overflow-x-auto pb-3 sm:grid sm:grid-cols-2 sm:overflow-visible sm:pb-0 lg:grid-cols-3 xl:grid-cols-5 xl:gap-4">
           {componentCards.map((card) => (
-            <div key={card.label} className="group overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-700 dark:bg-slate-900">
+            <div key={card.label} className="group min-w-[260px] snap-start overflow-hidden rounded-2xl border border-slate-200 bg-white transition-all hover:-translate-y-1 hover:shadow-xl dark:border-slate-700 dark:bg-slate-900 sm:min-w-0">
               <div className={`h-2 bg-gradient-to-r ${card.color}`} />
-              <div className="p-5">
-                <div className="mb-4 flex items-center justify-between">
-                  <p className="text-2xl font-semibold text-slate-900 dark:text-slate-100">{card.label}</p>
-                  <span className="grid h-10 w-10 place-items-center rounded-xl bg-slate-50 text-sm font-semibold text-slate-700 ring-1 ring-slate-200 group-hover:bg-blue-700 group-hover:text-white dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700">{card.value}%</span>
+              <div className="p-4 sm:p-5">
+                <div className="mb-3 flex items-center justify-between">
+                  <p className="text-xl font-semibold text-slate-900 dark:text-slate-100 sm:text-2xl">{card.label}</p>
+                  <span className="grid h-9 w-9 place-items-center rounded-xl bg-slate-50 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 group-hover:bg-blue-700 group-hover:text-white dark:bg-slate-800 dark:text-slate-200 dark:ring-slate-700 sm:h-10 sm:w-10 sm:text-sm">{card.value}%</span>
                 </div>
-                <p className="mt-1 text-sm font-bold text-slate-700 dark:text-slate-200">{card.title}</p>
-                <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">{card.copy}</p>
+                <p className="mt-1 text-xs font-bold text-slate-700 dark:text-slate-200 sm:text-sm">{card.title}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-600 dark:text-slate-300 sm:text-sm sm:leading-6">{card.copy}</p>
               </div>
             </div>
           ))}
         </div>
+        <p className="mt-2 text-center text-xs text-slate-400 dark:text-slate-500 sm:hidden">Swipe horizontally to preview all tracks</p>
       </Panel>
       <Panel className="lg:col-span-3">
         <p className="eyebrow">Live visualization</p>
         <h2 className="section-title">Component distribution is easy to scan.</h2>
-        <div className="mt-5 h-72">
+        <div className="mt-4 h-60 sm:h-72">
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
             <PieChart>
-              <Pie data={componentCards} dataKey="value" nameKey="label" innerRadius={72} outerRadius={104} paddingAngle={5}>
+              <Pie data={componentCards} dataKey="value" nameKey="label" innerRadius={58} outerRadius={88} paddingAngle={4}>
                 {componentCards.map((entry) => (
                   <Cell key={entry.label} fill={entry.fill} />
                 ))}
@@ -1392,27 +1554,39 @@ function HomeSections({ onStart }: { onStart: () => void }) {
             </PieChart>
           </ResponsiveContainer>
         </div>
+        {/* Mobile & High-Contrast Legend */}
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-slate-100 pt-3 text-xs sm:grid-cols-3 dark:border-slate-800">
+          {componentCards.map((item) => (
+            <div key={item.label} className="flex items-center gap-2">
+              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: item.fill }} />
+              <span className="truncate font-medium text-slate-700 dark:text-slate-300">{item.label}</span>
+              <span className="ml-auto font-bold text-slate-900 dark:text-white">{item.value}%</span>
+            </div>
+          ))}
+        </div>
       </Panel>
       <Panel className="lg:col-span-3">
         <p className="eyebrow">Service outcomes</p>
         <h2 className="section-title">A livelier program view for admins, facilitators, and students.</h2>
-        <div className="mt-5 h-72">
+        <div className="mt-4 h-60 sm:h-72">
           <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
-            <BarChart data={impactBars}>
-              <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 12 }} />
+            <BarChart data={impactBars} margin={{ top: 15, right: 10, left: -20, bottom: 0 }}>
+              <XAxis dataKey="name" tickLine={false} axisLine={false} tick={{ fontSize: 11 }} />
               <Tooltip />
-              <Bar dataKey="score" radius={[10, 10, 0, 0]} fill="#f2b705" />
+              <Bar dataKey="score" radius={[8, 8, 0, 0]} fill="#f2b705" />
             </BarChart>
           </ResponsiveContainer>
         </div>
+        <p className="mt-3 text-center text-xs text-slate-500 dark:text-slate-400">Standardized readiness & learning outcome metrics</p>
       </Panel>
       <Panel className="lg:col-span-6">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="eyebrow">Ready to start?</p>
             <h2 className="section-title">Request access with your BiPSU student ID.</h2>
+            <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 sm:text-sm">Official registration is open for First Year university students enrolled in NSTP.</p>
           </div>
-          <button onClick={onStart} className="inline-flex items-center justify-center gap-2 rounded-full bg-blue-700 px-6 py-3 font-semibold text-white shadow-sm">
+          <button onClick={onStart} className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-blue-700 px-6 py-3 font-semibold text-white shadow-sm hover:bg-blue-800 sm:w-auto">
             Begin registration
             <ArrowRight className="h-4 w-4" />
           </button>
@@ -1527,7 +1701,7 @@ function PortalSections({ onLogin }: { onLogin: () => void }) {
         <p className="section-copy">Students can view released First and Second Semester standing and clearance requirements.</p>
       </Panel>
       <Panel className="lg:col-span-6">
-        <button onClick={onLogin} className="inline-flex items-center gap-2 rounded-full bg-[#f2b705] px-6 py-3 font-semibold text-[#09285f]">
+        <button onClick={onLogin} className="inline-flex min-h-[48px] w-full sm:w-auto items-center justify-center gap-2 rounded-xl bg-[#f2b705] px-6 py-3 font-semibold text-[#09285f] shadow-sm hover:bg-[#ffe17d]">
           Open portal access
           <ArrowRight className="h-4 w-4" />
         </button>
@@ -1538,7 +1712,7 @@ function PortalSections({ onLogin }: { onLogin: () => void }) {
 
 function Panel({ children, className = '', id }: { children: React.ReactNode; className?: string; id?: string }) {
   return (
-    <section id={id} className={`rounded-2xl border border-slate-200 bg-white/82 p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/78 ${className}`}>
+    <section id={id} className={`rounded-2xl border border-slate-200 bg-white/82 p-4 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.45)] backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/78 sm:p-6 lg:p-8 ${className}`}>
       {children}
     </section>
   );

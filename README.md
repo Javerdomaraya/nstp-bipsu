@@ -164,3 +164,10 @@ npm run prisma:studio
 - Frontend dev server: usually `http://localhost:5173`
 
 Your backend port comes from `backend/.env`.
+
+
+admin@bipsu.edu.ph
+coordinator.cwts@bipsu.edu.ph
+coordinator.mts@bipsu.edu.ph
+instructor.cwts@bipsu.edu.ph
+student.cwts@bipsu.edu.ph

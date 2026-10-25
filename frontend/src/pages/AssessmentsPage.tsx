@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { FileText, CheckCircle, Clock, Award, TrendingUp, History, AlertTriangle, ArrowLeft } from 'lucide-react';
+import { FileText, CheckCircle, Clock, Award, TrendingUp, History, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
 import { replaceAssessmentsSnapshot, NstpAssessment } from '../data/nstpData';
 import { apiGet, apiPost } from '../services/apiClient';
 import { fetchStudentAssessments } from '../services/assessments';
 import type { AuthenticatedUser } from '../services/authUser';
+import { toast } from 'sonner';
 
 export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedUser; onBack?: () => void }) {
   const [library, setLibrary] = useState<NstpAssessment[]>([]);
@@ -14,6 +15,7 @@ export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedU
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [attemptHistory, setAttemptHistory] = useState<Record<string, any[]>>({});
   const [libraryError, setLibraryError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   const answersRef = useRef(answers);
   const shuffledQuestionsRef = useRef(shuffledQuestions);
@@ -59,14 +61,20 @@ export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedU
     const currentResults = resultsRef.current;
     const currentHistory = attemptHistoryRef.current;
 
-    if (!currentAssessment) return;
+    if (!currentAssessment || submitting) return;
 
+    setSubmitting(true);
     let serverAttempt;
     try {
       serverAttempt = await apiPost<any>(`/nstp/students/me/assessments/${currentAssessment.id}/attempts`, {
         answers: currentQuestions.map((question, index) => ({ questionId: question.id, optionIndex: currentAnswers[index] ?? -1 })),
       });
-    } catch { return; }
+      toast.success('Assessment submitted successfully!');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to submit assessment. Please check your answers and try again.');
+      setSubmitting(false);
+      return;
+    }
 
     const nextResults = {
       ...currentResults,
@@ -90,6 +98,7 @@ export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedU
     setAttemptHistory(nextHistory);
     setActiveAssessment(null);
     setTimeLeft(null);
+    setSubmitting(false);
   };
 
   useEffect(() => {
@@ -192,8 +201,11 @@ export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedU
                 <p className="text-sm text-slate-600 dark:text-slate-300">Questions answered: {answeredCount} / {shuffledQuestions.length}</p>
               </div>
               <div className="flex gap-3">
-                <button onClick={() => setActiveAssessment(null)} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800">Cancel</button>
-                <button onClick={handleSubmit} className="bg-gradient-to-r from-blue-700 to-yellow-500 text-white px-8 py-2 rounded-xl hover:opacity-95 transition-opacity cursor-pointer">Submit Assessment</button>
+                <button disabled={submitting} onClick={() => setActiveAssessment(null)} className="px-6 py-2 border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors disabled:opacity-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 dark:hover:bg-slate-800">Cancel</button>
+                <button disabled={submitting} onClick={handleSubmit} className="inline-flex items-center gap-2 bg-gradient-to-r from-blue-700 to-yellow-500 text-white px-8 py-2 rounded-xl hover:opacity-95 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                  {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+                  {submitting ? 'Submitting...' : 'Submit Assessment'}
+                </button>
               </div>
             </div>
           </div>

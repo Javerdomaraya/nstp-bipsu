@@ -29,5 +29,9 @@
     "verify:schema": "npm run verify:schema --workspace backend",
     "prisma:studio": "npm run prisma:studio --workspace backend",
     "build": "npm run frontend:build && npm run build --workspace backend"
+  },
+  "dependencies": {
+    "@neon/config": "^1.9.3",
+    "@neon/env": "^1.6.4"
   }
 }

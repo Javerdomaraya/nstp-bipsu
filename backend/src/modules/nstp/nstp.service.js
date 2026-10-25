@@ -1082,6 +1082,15 @@ export async function deleteAdminResource(name, id) {
       'component-state': prisma.componentApplicationState,
       'audit-log': prisma.auditLogEntry,
     };
+    if (name === 'students') {
+      const student = await prisma.studentProfile.findFirst({
+        where: { OR: [{ id }, { userId: id }] },
+      });
+      if (student) {
+        return await prisma.studentProfile.delete({ where: { id: student.id } });
+      }
+      return null;
+    }
     const model = modelMap[name];
     if (model) {
       return await model.delete({ where: { id } });
