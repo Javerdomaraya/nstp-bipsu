@@ -484,7 +484,17 @@ export async function startMyQualifyingExam(req, res) {
     }, 200);
   }
 
-  // 2. Retake policy: cannot exceed allowed attempts (1 attempt allowed)
+  // Ensure any past-due STARTED attempt is marked EXPIRED
+  await prisma.qualifyingExamAttempt.updateMany({
+    where: {
+      userId: req.user.id,
+      status: 'STARTED',
+      expiresAt: { lte: now },
+    },
+    data: { status: 'EXPIRED' },
+  });
+
+  // 3. Retake policy: cannot exceed allowed attempts (1 attempt allowed)
   const existingAttempts = await prisma.qualifyingExamAttempt.count({
     where: { userId: req.user.id },
   });
