@@ -30,12 +30,5 @@ CREATE TABLE IF NOT EXISTS "qualifying_exam_attempt" (
 
 -- CreateIndex
 CREATE INDEX IF NOT EXISTS "qualifying_exam_attempt_userId_idx" ON "qualifying_exam_attempt"("userId");
-CREATE INDEX IF NOT EXISTS "qualifying_exam_attempt_examId_idx" ON "qualifying_exam_attempt"("examId");
 CREATE INDEX IF NOT EXISTS "qualifying_exam_attempt_preferredComponent_idx" ON "qualifying_exam_attempt"("preferredComponent");
 CREATE INDEX IF NOT EXISTS "qualifying_exam_attempt_status_idx" ON "qualifying_exam_attempt"("status");
-
--- AddForeignKey
-ALTER TABLE "qualifying_exam_attempt" ADD CONSTRAINT "qualifying_exam_attempt_userId_fkey" FOREIGN KEY ("userId") REFERENCES "user"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "qualifying_exam_attempt" ADD CONSTRAINT "qualifying_exam_attempt_examId_fkey" FOREIGN KEY ("examId") REFERENCES "exam"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
