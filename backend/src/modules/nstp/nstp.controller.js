@@ -328,7 +328,9 @@ export async function submitMyAssessment(req, res) {
   const answers = req.validated.body.answers;
   const expectedCount = Number(definition.questionsToShow || 0) || questions.length;
   const uniqueQuestionIds = new Set(answers.map((answer) => answer.questionId));
-  if (!questions.length || answers.length !== expectedCount || uniqueQuestionIds.size !== answers.length) return sendError(res, 'Invalid assessment answers.', 400);
+  if (!questions.length || answers.length !== expectedCount || uniqueQuestionIds.size !== answers.length) {
+    return sendError(res, 'Invalid assessment answers: count must match expected total and duplicates are rejected.', 400);
+  }
   const questionMap = new Map(questions.map((question) => [question.id, question]));
   let correct = 0;
   for (const answer of answers) {
@@ -336,12 +338,12 @@ export async function submitMyAssessment(req, res) {
     if (!question || answer.optionIndex >= question.options.length) return sendError(res, 'Invalid assessment answers.', 400);
     if (Number(answer.optionIndex) === Number(question.correctIndex)) correct += 1;
   }
-  const score = Math.round((correct / answers.length) * 100);
+  const score = Math.round((correct / expectedCount) * 100);
   const attemptNumber = await prisma.submission.count({ where: { studentId: req.student.id, quizId: quiz.id } }) + 1;
   const attempt = await prisma.submission.create({
     data: { studentId: req.student.id, quizId: quiz.id, content: { answers, attemptNumber }, score, status: 'GRADED', gradedAt: new Date() },
   });
-  return sendSuccess(res, { id: attempt.id, assessmentId: quiz.id, attemptNumber, score, correct, total: answers.length, passed: score >= Number(definition.passingScore || 0), submittedAt: attempt.submittedAt }, 201);
+  return sendSuccess(res, { id: attempt.id, assessmentId: quiz.id, attemptNumber, score, correct, total: expectedCount, passed: score >= Number(definition.passingScore || 0), submittedAt: attempt.submittedAt }, 201);
 }
 
 export async function getMyAttendance(req, res) {
@@ -459,6 +461,11 @@ export async function submitMyQualifyingExam(req, res) {
 
   const { attemptId, answers } = req.body;
   const canonicalPreferred = toCanonicalComponentType(req.body.preferredComponent) || req.body.preferredComponent;
+
+  const uniqueQuestionIds = new Set((answers || []).map((ans) => ans.questionId));
+  if (uniqueQuestionIds.size !== (answers || []).length) {
+    return sendError(res, 'Duplicate question answers are not allowed.', 400);
+  }
 
   const attempt = await prisma.qualifyingExamAttempt.findFirst({
     where: {

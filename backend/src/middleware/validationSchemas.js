@@ -153,7 +153,10 @@ export const submitAssessmentSchema = z.object({
       questionId: z.string().min(1).max(200),
       optionIndex: z.number().int().min(-1).max(9),
     }).strict()).min(1).max(500),
-  }).strict(),
+  }).strict().refine(
+    (body) => new Set(body.answers.map((a) => a.questionId)).size === body.answers.length,
+    { message: 'Duplicate question answers are not allowed', path: ['answers'] },
+  ),
   params: z.object({ assessmentId: z.string().min(1).max(200) }),
   query: z.object({}).optional(),
 });
@@ -174,7 +177,10 @@ export const submitQualifyingExamSchema = z.object({
       questionId: z.string().trim().min(1).max(200),
       optionIndex: z.number().int().min(0).max(20),
     }).strict()).min(1).max(500),
-  }).strict(),
+  }).strict().refine(
+    (body) => new Set(body.answers.map((a) => a.questionId)).size === body.answers.length,
+    { message: 'Duplicate question answers are not allowed', path: ['answers'] },
+  ),
   params: z.object({}).optional(),
   query: z.object({}).optional(),
 });
