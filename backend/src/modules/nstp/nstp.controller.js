@@ -652,7 +652,8 @@ export async function submitMyQualifyingExam(req, res) {
         return await prisma.$transaction(async (tx) => {
           try {
             await tx.$executeRawUnsafe('SET LOCAL statement_timeout = 5000;');
-            await tx.$executeRawUnsafe('SET LOCAL lock_timeout = 4000;');
+            const lockTimeoutMs = Number(process.env.QUALIFYING_LOCK_TIMEOUT_MS) || 4000;
+            await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = ${lockTimeoutMs};`);
           } catch {
             // Fallback for mock/test environments
           }
