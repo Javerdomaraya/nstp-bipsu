@@ -421,6 +421,49 @@ export async function startMyQualifyingExam(req, res) {
     return sendError(res, `Cannot start exam before completing 25 hours of common modules (completed: ${completedHours} hrs).`, 400);
   }
 
+  const now = new Date();
+
+  // If student already has an active, unexpired attempt, resume it
+  const activeAttempt = await prisma.qualifyingExamAttempt.findFirst({
+    where: {
+      userId: req.user.id,
+      status: 'STARTED',
+      expiresAt: { gt: now },
+    },
+  });
+
+  if (activeAttempt) {
+    const exam = await prisma.exam.findFirst({
+      where: {
+        OR: [
+          { id: activeAttempt.examId || QUALIFYING_EXAM_ID },
+          { id: QUALIFYING_EXAM_ID },
+          { title: { contains: 'Qualifying' } },
+        ],
+      },
+      include: {
+        questions: {
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    const sanitizedQuestions = (exam?.questions || []).map((q, idx) => ({
+      id: q.id,
+      prompt: q.prompt,
+      options: q.options,
+      order: q.order ?? idx,
+    }));
+
+    return sendSuccess(res, {
+      attemptId: activeAttempt.id,
+      examTitle: exam?.title || 'Qualifying Examination',
+      serverNow: new Date().toISOString(),
+      expiresAt: activeAttempt.expiresAt.toISOString(),
+      questions: sanitizedQuestions,
+    }, 200);
+  }
+
   // 2. Retake policy: cannot exceed allowed attempts (1 attempt allowed)
   const existingAttempts = await prisma.qualifyingExamAttempt.count({
     where: { userId: req.user.id },
@@ -477,7 +520,7 @@ export async function startMyQualifyingExam(req, res) {
   return sendSuccess(res, {
     attemptId: attempt.id,
     examTitle: exam.title,
-    serverNow: startedAt.toISOString(),
+    serverNow: new Date().toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     questions: sanitizedQuestions,
   }, 201);

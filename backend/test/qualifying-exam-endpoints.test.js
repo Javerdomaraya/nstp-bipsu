@@ -78,6 +78,7 @@ test('a student cannot start under 25 hours', async () => {
   assert.match(res.body.error, /25 hours/);
 
   // Student with 25+ hours completed succeeds
+  prisma.qualifyingExamAttempt.findFirst = async () => null;
   prisma.moduleProgress.findMany = async () => [
     { completedAt: new Date(), module: { hours: 15 } },
     { completedAt: new Date(), module: { hours: 10 } },
@@ -107,6 +108,7 @@ test('a student cannot start under 25 hours', async () => {
 });
 
 test('a student cannot exceed attempts', async () => {
+  prisma.qualifyingExamAttempt.findFirst = async () => null;
   // Student completed 25 hours, but already has 1 attempt
   prisma.moduleProgress.findMany = async () => [
     { completedAt: new Date(), module: { hours: 25 } },
