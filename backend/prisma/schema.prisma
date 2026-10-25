@@ -598,23 +598,52 @@ model AttendanceSession {
 }
 
 model QualifyingExamResult {
-  id                 String   @id
+  id                 String    @id
   userId             String
   userName           String
   userEmail          String
   preferredComponent String
   score              Int
   timestamp          String
-  createdAt          DateTime @default(now())
+  createdAt          DateTime  @default(now())
   assignedComponent  String?
   rank               Int?
   status             String?
   adminOverride      Boolean?
+  attemptNumber      Int       @default(1)
+  startedAt          DateTime? @default(now())
+  expiresAt          DateTime?
+  submittedAt        DateTime?
 
   @@index([userId])
   @@index([preferredComponent])
   @@index([status])
   @@map("qualifying_exam_result")
+}
+
+model QualifyingExamAttempt {
+  id                 String    @id @default(cuid())
+  userId             String
+  userName           String?
+  userEmail          String?
+  examId             String?
+  preferredComponent String
+  score              Int?
+  answers            Json?
+  attemptNumber      Int       @default(1)
+  startedAt          DateTime  @default(now())
+  expiresAt          DateTime
+  submittedAt        DateTime?
+  status             String    @default("STARTED")
+  assignedComponent  String?
+  rank               Int?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @default(now()) @updatedAt
+
+  @@index([userId])
+  @@index([preferredComponent])
+  @@index([status])
+  @@map("qualifying_exam_attempt")
 }
 
 model ComponentApplicationState {
