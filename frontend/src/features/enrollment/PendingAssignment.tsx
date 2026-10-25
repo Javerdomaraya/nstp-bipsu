@@ -4,14 +4,13 @@ import RoleShell from '../../components/layout/RoleShell';
 import { toNstpComponent } from '../../data/nstpData';
 import type { NstpComponent } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
+import { fetchMyQualifyingResults } from '../../services/api';
 
 type Props = {
   user: StudentUser;
   /**
    * Called only with one of the five canonical components. The polled value comes
-   * from the browser-writable `qualifyingExamResults` store, so it is validated
-   * before it is handed on: an unrecognised label must leave the student waiting,
-   * not grant access to a component that does not exist.
+   * from the server or browser-writable store, and is validated before it is handed on.
    */
   onAssign: (component: NstpComponent) => void;
   onLogout: () => void;
@@ -21,23 +20,45 @@ export default function PendingAssignment({ user, onAssign, onLogout }: Props) {
   const [examResult, setExamResult] = useState<any>(null);
 
   useEffect(() => {
+    let mounted = true;
+
+    const checkAssignment = async () => {
+      try {
+        const results = await fetchMyQualifyingResults();
+        const latest = Array.isArray(results) ? results[0] : null;
+        if (latest) {
+          if (mounted) setExamResult(latest);
+          const assignedComponent = toNstpComponent(latest.assignedComponent);
+          if (assignedComponent && mounted) {
+            onAssign(assignedComponent);
+            return;
+          }
+        }
+      } catch {
+        // Fallback to local storage if API is unreachable
+      }
+
+      const allResults = JSON.parse(localStorage.getItem('qualifyingExamResults') || '[]');
+      const userResult = allResults.find((r: any) => r.userId === user.id);
+      const assignedComponent = toNstpComponent(userResult?.assignedComponent);
+
+      if (assignedComponent && mounted) {
+        onAssign(assignedComponent);
+      }
+    };
+
     const result = localStorage.getItem(`examResult-${user.id}`);
     if (result) {
       setExamResult(JSON.parse(result));
     }
 
-    // Check if admin has assigned component
-    const checkAssignment = setInterval(() => {
-      const allResults = JSON.parse(localStorage.getItem('qualifyingExamResults') || '[]');
-      const userResult = allResults.find((r: any) => r.userId === user.id);
-      const assignedComponent = toNstpComponent(userResult?.assignedComponent);
+    checkAssignment();
+    const interval = setInterval(checkAssignment, 2000);
 
-      if (assignedComponent) {
-        onAssign(assignedComponent);
-      }
-    }, 2000);
-
-    return () => clearInterval(checkAssignment);
+    return () => {
+      mounted = false;
+      clearInterval(interval);
+    };
   }, [user.id, onAssign]);
 
   return (

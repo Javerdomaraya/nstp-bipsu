@@ -100,6 +100,10 @@ export async function fetchQualifyingResults() {
   return apiGet<QualifyingExamResult[]>(`${BASE}/qualifying-results`, []);
 }
 
+export async function fetchMyQualifyingResults() {
+  return apiGet<any[]>('/nstp/students/me/qualifying-results', []);
+}
+
 export async function upsertQualifyingResult(payload: QualifyingExamResult) {
   return apiPost<QualifyingExamResult>(`${BASE}/qualifying-results`, payload, null as unknown as QualifyingExamResult);
 }

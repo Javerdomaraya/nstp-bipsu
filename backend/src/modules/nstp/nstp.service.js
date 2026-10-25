@@ -1077,7 +1077,26 @@ export async function upsertAdminResource(name, lookup, payload) {
     if (name === 'training-groups') return await upsertSimple(prisma.trainingGroup);
     if (name === 'attendance-records') return await upsertSimple(prisma.attendanceRecord);
     if (name === 'attendance-sessions') return await upsertSimple(prisma.attendanceSession);
-    if (name === 'qualifying-results') return await upsertSimple(prisma.qualifyingExamResult);
+    if (name === 'qualifying-results') {
+      const result = await upsertSimple(prisma.qualifyingExamResult);
+      if (nextPayload.assignedComponent && nextPayload.userId) {
+        const canonicalComp = toComponentType(nextPayload.assignedComponent);
+        if (canonicalComp) {
+          await placeStudent(prisma, {
+            userId: nextPayload.userId,
+            canonicalComponent: canonicalComp,
+          });
+          await prisma.qualifyingExamAttempt.updateMany({
+            where: { userId: nextPayload.userId },
+            data: {
+              assignedComponent: canonicalComp,
+              status: nextPayload.status || 'assigned-alternative',
+            },
+          });
+        }
+      }
+      return result;
+    }
     if (name === 'component-state') {
       const statePayload = {
         ...nextPayload,
