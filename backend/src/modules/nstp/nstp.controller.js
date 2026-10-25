@@ -22,6 +22,7 @@ import {
   overrideAssessmentAttempt,
   upsertAdminResource,
   placeStudent,
+  countDistinctPlacedStudents,
 } from './nstp.service.js';
 import { emitCollectionChange } from '../../websocket.js';
 import { studentSelfSelect, toStudentSelfProfileDto } from '../auth/user.dto.js';
@@ -542,18 +543,12 @@ export async function submitMyQualifyingExam(req, res) {
       const qualifyingScore = appState?.qualifyingScore ?? 70;
       const slotLimit = slotLimits[canonicalPreferred] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonicalPreferred] ?? 0;
 
-      const assignedResults = await tx.qualifyingExamResult.findMany({
-        where: {
-          userId: { not: req.user.id },
-          assignedComponent: { not: null },
-          status: { notIn: ['waitlisted', 'not-qualified'] },
-        },
-        select: { assignedComponent: true },
+      // Count quota strictly by distinct placed students in this component
+      const assignedCount = await countDistinctPlacedStudents(tx, {
+        canonicalComponent: canonicalPreferred,
+        currentStudentId: req.student?.id,
+        currentUserId: req.user?.id,
       });
-
-      const assignedCount = assignedResults.filter(
-        (r) => toCanonicalComponentType(r.assignedComponent) === canonicalPreferred
-      ).length;
 
       const passed = score >= qualifyingScore;
       let status;
