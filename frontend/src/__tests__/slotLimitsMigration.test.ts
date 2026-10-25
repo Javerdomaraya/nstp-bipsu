@@ -16,16 +16,14 @@ import {
 } from '../data/nstpData';
 
 const store: Record<string, string> = {};
-const mockLocalStorage = {
+const mockLocalStorage: any = {
   getItem: (k: string) => store[k] ?? null,
   setItem: (k: string, v: string) => { store[k] = String(v); },
   removeItem: (k: string) => { delete store[k]; },
   clear: () => { Object.keys(store).forEach(k => delete store[k]); },
 };
-// @ts-expect-error mock storage
-globalThis.localStorage = mockLocalStorage;
-// @ts-expect-error mock window
-globalThis.window = {
+(globalThis as any).localStorage = mockLocalStorage;
+(globalThis as any).window = {
   localStorage: mockLocalStorage,
   dispatchEvent: () => true,
 };

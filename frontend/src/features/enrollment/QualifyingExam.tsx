@@ -5,96 +5,68 @@ import type { StudentUser } from '../../services/authUser';
 import { apiPost } from '../../services/apiClient';
 import { toast } from 'sonner';
 
-const EXAM_QUESTIONS = [
-  {
-    question: 'What is the primary objective of the National Service Training Program?',
-    options: [
-      'To provide military training to all students',
-      'To promote civic consciousness and defense preparedness',
-      'To replace regular academic courses',
-      'To provide employment after graduation'
-    ],
-    correct: 1
-  },
-  {
-    question: 'Which government agency oversees the implementation of NSTP?',
-    options: ['Department of Education', 'Commission on Higher Education', 'Department of National Defense', 'All of the above'],
-    correct: 3
-  },
-  {
-    question: 'What does CWTS stand for?',
-    options: [
-      'Community Welfare Training Service',
-      'Civic Welfare Training Service',
-      'Community Work Training Service',
-      'Civic Work and Training Service'
-    ],
-    correct: 1
-  },
-  {
-    question: 'How many hours of training are required for NSTP completion?',
-    options: ['25 hours', '36 hours', '54 hours', '72 hours'],
-    correct: 2
-  },
-  {
-    question: 'Which component focuses on teaching literacy to communities?',
-    options: ['CWTS', 'LTS', 'MTS', 'ROTC'],
-    correct: 1
-  },
-  {
-    question: 'What is a key principle of community development discussed in the seminars?',
-    options: [
-      'Top-down approach',
-      'Participatory development',
-      'Individual focus',
-      'Government-only initiative'
-    ],
-    correct: 1
-  },
-  {
-    question: 'In disaster risk reduction, what does DRRM stand for?',
-    options: [
-      'Disaster Response and Recovery Management',
-      'Disaster Risk Reduction and Management',
-      'Defense and Risk Response Mechanism',
-      'Disaster Relief and Rescue Mission'
-    ],
-    correct: 1
-  },
-  {
-    question: 'Which of the following is NOT a component of NSTP?',
-    options: ['CWTS', 'LTS', 'MTS', 'JROTC'],
-    correct: 3
-  },
-  {
-    question: 'What is the main focus of MTS (Military Training Service)?',
-    options: [
-      'Community service',
-      'Literacy training',
-      'Military training and national defense preparation',
-      'Environmental conservation'
-    ],
-    correct: 2
-  },
-  {
-    question: 'According to the Philippine Constitution, what is emphasized regarding citizenship?',
-    options: [
-      'Rights only',
-      'Duties only',
-      'Both rights and responsibilities',
-      'Neither rights nor duties'
-    ],
-    correct: 2
-  }
-];
+export type QualifyingQuestion = {
+  id: string;
+  prompt: string;
+  options: string[];
+  order?: number;
+};
 
 export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout }: { user: StudentUser; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void }) {
+  const [questions, setQuestions] = useState<QualifyingQuestion[]>([]);
+  const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [timeLeft, setTimeLeft] = useState(3600); // 60 minutes
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
 
   useEffect(() => {
+    let mounted = true;
+
+    async function startExamSession() {
+      try {
+        const response = await apiPost<{
+          success: boolean;
+          data: {
+            attemptId: string;
+            examTitle: string;
+            expiresAt: string;
+            questions: QualifyingQuestion[];
+          };
+        } | null>('/nstp/students/me/qualifying-exam/start', { preferredComponent }, null);
+
+        if (!mounted) return;
+
+        if (response?.data?.questions) {
+          setQuestions(response.data.questions);
+          setAttemptId(response.data.attemptId);
+          if (response.data.expiresAt) {
+            const remaining = Math.max(0, Math.floor((new Date(response.data.expiresAt).getTime() - Date.now()) / 1000));
+            setTimeLeft(remaining);
+          }
+        } else {
+          setLoadError('Unable to load qualifying exam questions. Please try again.');
+        }
+      } catch (err: any) {
+        if (!mounted) return;
+        setLoadError(err?.message || 'Unable to start qualifying exam.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    startExamSession();
+
+    return () => {
+      mounted = false;
+    };
+  }, [preferredComponent]);
+
+  useEffect(() => {
+    if (loading || submitted || timeLeft <= 0) return;
+
     const timer = setInterval(() => {
       setTimeLeft(t => {
         if (t <= 1) {
@@ -106,7 +78,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     }, 1000);
 
     return () => clearInterval(timer);
-  }, []);
+  }, [loading, submitted, timeLeft]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -114,44 +86,61 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (submitted) return;
 
-    let correct = 0;
-    EXAM_QUESTIONS.forEach((q, idx) => {
-      if (answers[idx] === q.correct) {
-        correct++;
+    try {
+      const payload = {
+        attemptId,
+        preferredComponent,
+        answers: Object.entries(answers).map(([qIdx, optIdx]) => ({
+          questionId: questions[Number(qIdx)]?.id || `q-${qIdx}`,
+          optionIndex: optIdx,
+        })),
+      };
+
+      const res = await apiPost<{
+        success: boolean;
+        data: {
+          id: string;
+          score: number;
+          passed: boolean;
+          assignedComponent: string | null;
+          status: string;
+        };
+      } | null>('/nstp/students/me/qualifying-exam/submit', payload, null);
+
+      if (res?.data) {
+        const finalScore = res.data.score ?? 0;
+        setScore(finalScore);
+        setSubmitted(true);
+
+        const examResult: QualifyingExamResult = {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          preferredComponent,
+          score: finalScore,
+          assignedComponent: (res.data.assignedComponent as NstpComponent) || null,
+          status: res.data.status as QualifyingExamResult['status'],
+          timestamp: new Date().toISOString(),
+        };
+
+        const allResults = loadQualifyingExamResults();
+        const updatedResults = allResults.some((result) => result.userId === user.id)
+          ? allResults.map((result) => (result.userId === user.id ? examResult : result))
+          : [...allResults, examResult];
+
+        saveQualifyingExamResults(updatedResults);
+        syncStudentAccessFromQualifyingResult(examResult);
+        localStorage.setItem(`examResult-${user.id}`, JSON.stringify(examResult));
+        toast.success('Exam submitted successfully.');
+      } else {
+        toast.error('Unable to submit exam. Please try again.');
       }
-    });
-
-    const finalScore = Math.round((correct / EXAM_QUESTIONS.length) * 100);
-    setScore(finalScore);
-    setSubmitted(true);
-
-    // Save exam result
-    const examResult: QualifyingExamResult = {
-      userId: user.id,
-      userName: user.name,
-      userEmail: user.email,
-      preferredComponent,
-      score: finalScore,
-      timestamp: new Date().toISOString()
-    };
-
-    const allResults = loadQualifyingExamResults();
-    const assignedResult = autoAssignQualifyingResult(examResult, allResults);
-    const updatedResults = allResults.some((result) => result.userId === user.id)
-      ? allResults.map((result) => (result.userId === user.id ? assignedResult : result))
-      : [...allResults, assignedResult];
-
-    saveQualifyingExamResults(updatedResults);
-    syncStudentAccessFromQualifyingResult(assignedResult);
-
-    // Save to user's record locally and persist to server
-    localStorage.setItem(`examResult-${user.id}`, JSON.stringify(assignedResult));
-    apiPost('/nstp/students/me/qualifying-results', assignedResult)
-      .then(() => toast.success('Exam result synced with server.'))
-      .catch((err) => console.warn('Could not sync exam result to server:', err));
+    } catch (err: any) {
+      toast.error(err?.message || 'Could not submit exam. Please try again.');
+    }
   };
 
   if (submitted) {
@@ -251,58 +240,74 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
           </div>
         </div>
 
+        {loadError && (
+          <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
+            <p className="font-semibold">{loadError}</p>
+          </div>
+        )}
+
+        {loading && (
+          <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <p className="text-slate-600 dark:text-slate-300">Loading qualifying examination questions...</p>
+          </div>
+        )}
+
         {/* Questions */}
-        <div className="space-y-6 mb-6">
-          {EXAM_QUESTIONS.map((q, idx) => (
-            <div key={idx} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-              <h3 className="font-semibold text-slate-900 mb-4 dark:text-slate-100">
-                {idx + 1}. {q.question}
-              </h3>
-              <div className="space-y-3">
-                {q.options.map((option, optIdx) => (
-                  <label
-                    key={optIdx}
-                    className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-colors ${
-                      answers[idx] === optIdx
-                        ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10'
-                        : 'border-slate-200 hover:border-amber-300 dark:border-slate-700 dark:hover:border-amber-400'
-                    }`}
-                  >
-                    <input
-                      type="radio"
-                      name={`question-${idx}`}
-                      checked={answers[idx] === optIdx}
-                      onChange={() => setAnswers({ ...answers, [idx]: optIdx })}
-                      className="w-4 h-4 text-amber-600"
-                    />
-                    <span className="text-slate-700 dark:text-slate-200">{option}</span>
-                  </label>
-                ))}
+        {!loading && (
+          <div className="space-y-6 mb-6">
+            {questions.map((q, idx) => (
+              <div key={q.id || idx} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+                <h3 className="font-semibold text-slate-900 mb-4 dark:text-slate-100">
+                  {idx + 1}. {q.prompt}
+                </h3>
+                <div className="space-y-3">
+                  {q.options.map((option, optIdx) => (
+                    <label
+                      key={optIdx}
+                      className={`flex items-center gap-3 p-4 rounded-lg border-2 cursor-pointer transition-colors ${
+                        answers[idx] === optIdx
+                          ? 'border-amber-500 bg-amber-50 dark:bg-amber-500/10'
+                          : 'border-slate-200 hover:border-amber-300 dark:border-slate-700 dark:hover:border-amber-400'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name={`question-${idx}`}
+                        checked={answers[idx] === optIdx}
+                        onChange={() => setAnswers({ ...answers, [idx]: optIdx })}
+                        className="w-4 h-4 text-amber-600"
+                      />
+                      <span className="text-slate-700 dark:text-slate-200">{option}</span>
+                    </label>
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
 
         {/* Submit */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 sticky bottom-0 shadow-sm dark:border-slate-700 dark:bg-slate-900">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-medium text-slate-900 dark:text-slate-100">
-                Questions answered: {Object.keys(answers).length} / {EXAM_QUESTIONS.length}
-              </p>
-              <p className="text-sm text-slate-600 dark:text-slate-300">
-                Make sure to review all answers before submitting
-              </p>
+        {!loading && questions.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-6 sticky bottom-0 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-medium text-slate-900 dark:text-slate-100">
+                  Questions answered: {Object.keys(answers).length} / {questions.length}
+                </p>
+                <p className="text-sm text-slate-600 dark:text-slate-300">
+                  Make sure to review all answers before submitting
+                </p>
+              </div>
+              <button
+                onClick={handleSubmit}
+                disabled={Object.keys(answers).length < questions.length}
+                className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium disabled:bg-slate-300 disabled:cursor-not-allowed"
+              >
+                Submit Examination
+              </button>
             </div>
-            <button
-              onClick={handleSubmit}
-              disabled={Object.keys(answers).length < EXAM_QUESTIONS.length}
-              className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium disabled:bg-slate-300 disabled:cursor-not-allowed"
-            >
-              Submit Examination
-            </button>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
