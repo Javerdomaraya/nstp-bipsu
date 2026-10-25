@@ -477,6 +477,7 @@ export async function startMyQualifyingExam(req, res) {
   return sendSuccess(res, {
     attemptId: attempt.id,
     examTitle: exam.title,
+    serverNow: startedAt.toISOString(),
     expiresAt: attempt.expiresAt.toISOString(),
     questions: sanitizedQuestions,
   }, 201);

@@ -101,6 +101,7 @@ test('a student cannot start under 25 hours', async () => {
   assert.equal(resOk.statusCode, 201);
   assert.equal(resOk.body.success, true);
   assert.equal(resOk.body.data.attemptId, 'attempt-1');
+  assert.ok(resOk.body.data.serverNow, 'start response must return serverNow');
   assert.equal(resOk.body.data.questions[0].answer, undefined, 'answer key must be redacted');
   assert.equal(createdData.preferredComponent, 'CWTS');
 });

@@ -16,6 +16,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
   const [questions, setQuestions] = useState<QualifyingQuestion[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [clockOffset, setClockOffset] = useState<number>(0);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<number, number>>({});
@@ -31,6 +32,36 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
   questionsRef.current = questions;
   attemptIdRef.current = attemptId;
   submittedRef.current = submitted;
+
+  const storageKey = attemptId ? `qualifying-exam-answers-${user.id}-${attemptId}` : null;
+
+  // Restore saved answers from sessionStorage once attemptId is available
+  useEffect(() => {
+    if (!storageKey || typeof window === 'undefined') return;
+    try {
+      const saved = sessionStorage.getItem(storageKey);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === 'object') {
+          setAnswers((prev) => ({ ...prev, ...parsed }));
+        }
+      }
+    } catch {
+      // Ignore sessionStorage deserialization errors
+    }
+  }, [storageKey]);
+
+  // Autosave answers to sessionStorage whenever answers change
+  useEffect(() => {
+    if (!storageKey || typeof window === 'undefined' || submitted) return;
+    try {
+      if (Object.keys(answers).length > 0) {
+        sessionStorage.setItem(storageKey, JSON.stringify(answers));
+      }
+    } catch {
+      // Ignore quota errors
+    }
+  }, [answers, storageKey, submitted]);
 
   const handleSubmit = useCallback(async () => {
     if (submittedRef.current) return;
@@ -61,6 +92,10 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
         const finalScore = res.data.score ?? 0;
         setScore(finalScore);
         setSubmitted(true);
+
+        if (attemptIdRef.current && typeof window !== 'undefined') {
+          sessionStorage.removeItem(`qualifying-exam-answers-${user.id}-${attemptIdRef.current}`);
+        }
 
         const examResult: QualifyingExamResult = {
           userId: user.id,
@@ -102,6 +137,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
           data: {
             attemptId: string;
             examTitle: string;
+            serverNow?: string;
             expiresAt: string;
             questions: QualifyingQuestion[];
           };
@@ -112,9 +148,14 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
         if (response?.data?.questions) {
           setQuestions(response.data.questions);
           setAttemptId(response.data.attemptId);
+          if (response.data.serverNow) {
+            const offset = new Date(response.data.serverNow).getTime() - Date.now();
+            setClockOffset(offset);
+          }
           if (response.data.expiresAt) {
             setExpiresAt(response.data.expiresAt);
-            const remaining = Math.max(0, Math.floor((new Date(response.data.expiresAt).getTime() - Date.now()) / 1000));
+            const serverCurrent = response.data.serverNow ? new Date(response.data.serverNow).getTime() : Date.now();
+            const remaining = Math.max(0, Math.floor((new Date(response.data.expiresAt).getTime() - serverCurrent) / 1000));
             setTimeLeft(remaining);
           }
         } else {
@@ -135,12 +176,13 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     };
   }, [preferredComponent]);
 
-  // Server-authoritative timer: computes remaining seconds directly against server expiresAt
+  // Server-authoritative timer using clock offset to eliminate client clock skew
   useEffect(() => {
     if (loading || submitted || !expiresAt) return;
 
     const updateRemaining = () => {
-      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      const estimatedServerNow = Date.now() + clockOffset;
+      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - estimatedServerNow) / 1000));
       setTimeLeft(remaining);
       if (remaining <= 0) {
         handleSubmit();
@@ -151,7 +193,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     const timer = setInterval(updateRemaining, 1000);
 
     return () => clearInterval(timer);
-  }, [loading, submitted, expiresAt, handleSubmit]);
+  }, [loading, submitted, expiresAt, clockOffset, handleSubmit]);
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
