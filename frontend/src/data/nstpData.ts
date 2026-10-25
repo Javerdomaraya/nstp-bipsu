@@ -1,5 +1,17 @@
 import { ApiRequestError, apiGet, apiPost, apiDel } from '../services/apiClient';
-import { toCoordinatorScope, toNstpComponent, type CoordinatorScope, type NstpComponent } from './nstpComponents';
+import {
+  toCoordinatorScope,
+  toNstpComponent,
+  toCanonicalComponentType,
+  toComponentDisplayLabel,
+  normalizeSlotLimits,
+  DEFAULT_CANONICAL_SLOT_LIMITS,
+  CANONICAL_COMPONENTS,
+  COMPONENT_DISPLAY_NAMES,
+  type CoordinatorScope,
+  type NstpComponent,
+  type CanonicalComponentType,
+} from './nstpComponents';
 import {
   DEMO_ACCOUNTS_SEED,
   DEMO_ASSESSMENTS_SEED,
@@ -16,8 +28,20 @@ import {
 // tested) without pulling in the API client. Re-exported here because they are
 // part of this module's public surface and every screen already imports them
 // from `nstpData`.
-export { NSTP_COMPONENTS, toNstpComponent, UNASSIGNED_COMPONENT_LABEL, COORDINATOR_SCOPES, toCoordinatorScope } from './nstpComponents';
-export type { NstpComponent, CoordinatorScope } from './nstpComponents';
+export {
+  NSTP_COMPONENTS,
+  CANONICAL_COMPONENTS,
+  COMPONENT_DISPLAY_NAMES,
+  DEFAULT_CANONICAL_SLOT_LIMITS,
+  toNstpComponent,
+  toCanonicalComponentType,
+  toComponentDisplayLabel,
+  normalizeSlotLimits,
+  UNASSIGNED_COMPONENT_LABEL,
+  COORDINATOR_SCOPES,
+  toCoordinatorScope,
+} from './nstpComponents';
+export type { NstpComponent, CanonicalComponentType, CoordinatorScope } from './nstpComponents';
 
 export type NstpRole = 'admin' | 'coordinator' | 'student' | 'facilitator';
 export type StaffAccountStatus = 'ACTIVE' | 'SUSPENDED';
@@ -642,7 +666,7 @@ export type QualifyingExamResult = {
 };
 
 export type ComponentApplicationState = {
-  slotLimits: Record<NstpComponent, number>;
+  slotLimits: Record<CanonicalComponentType, number>;
   qualifyingScore: number;
   applicationClosed: boolean;
   updatedAt?: string;
@@ -650,13 +674,7 @@ export type ComponentApplicationState = {
 };
 
 export const DEFAULT_COMPONENT_APPLICATION_STATE: ComponentApplicationState = {
-  slotLimits: {
-    CWTS: 600,
-    LTS: 400,
-    'MTS (Army)': 300,
-    'MTS (Navy)': 200,
-    'CWTS (Coast Guard)': 250,
-  },
+  slotLimits: { ...DEFAULT_CANONICAL_SLOT_LIMITS },
   qualifyingScore: 70,
   applicationClosed: false,
 };
@@ -836,10 +854,7 @@ export function loadComponentApplicationState(): ComponentApplicationState {
   return {
     ...DEFAULT_COMPONENT_APPLICATION_STATE,
     ...saved,
-    slotLimits: {
-      ...DEFAULT_COMPONENT_APPLICATION_STATE.slotLimits,
-      ...(saved.slotLimits || {}),
-    },
+    slotLimits: normalizeSlotLimits(saved.slotLimits),
     qualifyingScore: typeof saved.qualifyingScore === 'number' ? Math.max(0, Math.min(100, saved.qualifyingScore)) : DEFAULT_COMPONENT_APPLICATION_STATE.qualifyingScore,
     applicationClosed: typeof saved.applicationClosed === 'boolean' ? saved.applicationClosed : DEFAULT_COMPONENT_APPLICATION_STATE.applicationClosed,
   };
@@ -847,7 +862,11 @@ export function loadComponentApplicationState(): ComponentApplicationState {
 
 export async function saveComponentApplicationState(state: ComponentApplicationState): Promise<boolean> {
   if (typeof window === 'undefined') return false;
-  const records = incrementVersions([state]);
+  const normalizedState: ComponentApplicationState = {
+    ...state,
+    slotLimits: normalizeSlotLimits(state.slotLimits),
+  };
+  const records = incrementVersions([normalizedState]);
   writeSensitive(COMPONENT_APPLICATION_STATE_KEY, JSON.stringify(records[0]));
   window.dispatchEvent(new CustomEvent('nstp-component-state-updated'));
   const ok = await syncToApi(COMPONENT_APPLICATION_STATE_KEY, records);
@@ -934,13 +953,17 @@ export function syncStudentAccessFromQualifyingResults(results: QualifyingExamRe
 export function autoAssignQualifyingResult(result: QualifyingExamResult, existingResults: QualifyingExamResult[] = loadQualifyingExamResults()) {
   const state = loadComponentApplicationState();
   const preferred = result.preferredComponent;
-  const assignedToPreferred = existingResults.filter((row) => (
-    row.userId !== result.userId &&
-    row.assignedComponent === preferred &&
-    row.status &&
-    !['waitlisted', 'not-qualified'].includes(row.status)
-  )).length;
-  const preferredSlots = state.slotLimits[preferred] ?? 0;
+  const canonicalPreferred = toCanonicalComponentType(preferred) || 'CWTS';
+  const assignedToPreferred = existingResults.filter((row) => {
+    if (row.userId === result.userId) return false;
+    const rowCanonical = toCanonicalComponentType(row.assignedComponent);
+    return (
+      rowCanonical === canonicalPreferred &&
+      row.status &&
+      !['waitlisted', 'not-qualified'].includes(row.status)
+    );
+  }).length;
+  const preferredSlots = state.slotLimits[canonicalPreferred] ?? 0;
   const passed = result.score >= state.qualifyingScore;
 
   if (passed && assignedToPreferred < preferredSlots) {

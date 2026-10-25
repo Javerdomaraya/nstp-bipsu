@@ -4,11 +4,15 @@ import {
   COMPONENT_APPLICATION_STATE_KEY,
   DEFAULT_COMPONENT_APPLICATION_STATE,
   NSTP_COMPONENTS,
+  CANONICAL_COMPONENTS,
+  COMPONENT_DISPLAY_NAMES,
   loadComponentApplicationState,
   loadQualifyingExamResults,
   saveComponentApplicationState,
   saveQualifyingExamResults,
   syncStudentAccessFromQualifyingResults,
+  toCanonicalComponentType,
+  CanonicalComponentType,
   NstpComponent,
   QualifyingExamResult,
 } from '../../../data/nstpData';
@@ -17,7 +21,7 @@ const COMPONENTS = NSTP_COMPONENTS;
 
 export default function ComponentAssignment() {
   const [examResults, setExamResults] = useState<any[]>([]);
-  const [slotLimits, setSlotLimits] = useState<Record<NstpComponent, number>>(DEFAULT_COMPONENT_APPLICATION_STATE.slotLimits);
+  const [slotLimits, setSlotLimits] = useState<Record<CanonicalComponentType, number>>(DEFAULT_COMPONENT_APPLICATION_STATE.slotLimits);
   const [assignments, setAssignments] = useState<Record<string, any>>({});
   const [selectedComponent, setSelectedComponent] = useState('all');
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -78,9 +82,11 @@ export default function ComponentAssignment() {
   };
 
   const handleSlotChange = (component: string, value: string) => {
+    const canonical = toCanonicalComponentType(component);
+    if (!canonical) return;
     setSlotLimits(prev => ({
       ...prev,
-      [component]: parseInt(value) || 0
+      [canonical]: Math.max(0, parseInt(value, 10) || 0)
     }));
   };
 
@@ -100,13 +106,13 @@ export default function ComponentAssignment() {
     const qualifiedResults = sortedResults.filter((result: any) => result.score >= qualifyingScore && !result.adminOverride);
     const nonQualifiedResults = sortedResults.filter((result: any) => result.score < qualifyingScore && !result.adminOverride);
 
-    // Track slots filled per component
-    const slotsUsed: Record<string, number> = {
-      'CWTS': 0,
-      'CWTS (Coast Guard)': 0,
-      'LTS': 0,
-      'MTS (Army)': 0,
-      'MTS (Navy)': 0
+    // Track slots filled per canonical component
+    const slotsUsed: Record<CanonicalComponentType, number> = {
+      CWTS: 0,
+      CWTS_COAST_GUARD: 0,
+      LTS: 0,
+      MTS_ARMY: 0,
+      MTS_NAVY: 0
     };
 
     const newAssignments: Record<string, any> = {};
@@ -115,28 +121,31 @@ export default function ComponentAssignment() {
 
     const tryAssign = (result: any, component: string | null, status: string) => {
       if (!component) return false;
-      if (slotsUsed[component] >= slotLimits[component as NstpComponent]) return false;
+      const canonical = toCanonicalComponentType(component);
+      if (!canonical) return false;
+      if (slotsUsed[canonical] >= (slotLimits[canonical] || 0)) return false;
 
       newAssignments[result.userId] = {
         ...result,
         assignedComponent: component,
-        rank: slotsUsed[component] + 1,
+        rank: slotsUsed[canonical] + 1,
         status,
       };
-      slotsUsed[component]++;
+      slotsUsed[canonical]++;
       return true;
     };
 
     manualOverrides.forEach((result: any) => {
       const manualComponentSelection = result.assignedComponent || null;
-      if (manualComponentSelection && result.status !== 'waitlisted') {
+      const canonicalManual = manualComponentSelection ? toCanonicalComponentType(manualComponentSelection) : null;
+      if (manualComponentSelection && canonicalManual && result.status !== 'waitlisted') {
         newAssignments[result.userId] = {
           ...result,
           assignedComponent: manualComponentSelection,
-          rank: slotsUsed[manualComponentSelection] + 1,
+          rank: slotsUsed[canonicalManual] + 1,
           status: result.status || 'manual-approved',
         };
-        slotsUsed[manualComponentSelection]++;
+        slotsUsed[canonicalManual]++;
       } else {
         newAssignments[result.userId] = {
           ...result,
@@ -149,15 +158,16 @@ export default function ComponentAssignment() {
     // First pass: qualified students get preferred component if capacity is available
     qualifiedResults.forEach((result: any) => {
       const preferred = result.preferredComponent;
+      const canonical = toCanonicalComponentType(preferred);
 
-      if (slotsUsed[preferred] < slotLimits[preferred as NstpComponent]) {
+      if (canonical && slotsUsed[canonical] < (slotLimits[canonical] || 0)) {
         newAssignments[result.userId] = {
           ...result,
           assignedComponent: preferred,
-          rank: slotsUsed[preferred] + 1,
+          rank: slotsUsed[canonical] + 1,
           status: 'assigned-preferred'
         };
-        slotsUsed[preferred]++;
+        slotsUsed[canonical]++;
       } else {
         unassignedQualified.push(result);
       }
@@ -165,16 +175,20 @@ export default function ComponentAssignment() {
 
     // Second pass: remaining qualified students are reassigned to any component with vacancy
     unassignedQualified.forEach((result: any) => {
-      const availableComponent = COMPONENTS.find(comp => slotsUsed[comp] < slotLimits[comp]);
+      const availableComponent = COMPONENTS.find(comp => {
+        const canonical = toCanonicalComponentType(comp);
+        return canonical ? slotsUsed[canonical] < (slotLimits[canonical] || 0) : false;
+      });
 
       if (availableComponent) {
+        const canonicalAvail = toCanonicalComponentType(availableComponent)!;
         newAssignments[result.userId] = {
           ...result,
           assignedComponent: availableComponent,
-          rank: slotsUsed[availableComponent] + 1,
+          rank: slotsUsed[canonicalAvail] + 1,
           status: 'assigned-alternative'
         };
-        slotsUsed[availableComponent]++;
+        slotsUsed[canonicalAvail]++;
       } else {
         newAssignments[result.userId] = {
           ...result,
@@ -201,16 +215,20 @@ export default function ComponentAssignment() {
 
     if (shouldFillRemaining) {
       unassignedNonQualified.forEach((result: any) => {
-        const availableComponent = COMPONENTS.find(comp => slotsUsed[comp] < slotLimits[comp]);
+        const availableComponent = COMPONENTS.find(comp => {
+          const canonical = toCanonicalComponentType(comp);
+          return canonical ? slotsUsed[canonical] < (slotLimits[canonical] || 0) : false;
+        });
 
         if (availableComponent) {
+          const canonicalAvail = toCanonicalComponentType(availableComponent)!;
           newAssignments[result.userId] = {
             ...result,
             assignedComponent: availableComponent,
-            rank: slotsUsed[availableComponent] + 1,
+            rank: slotsUsed[canonicalAvail] + 1,
             status: availableComponent === result.preferredComponent ? 'filled-preferred' : 'filled-alternative',
           };
-          slotsUsed[availableComponent]++;
+          slotsUsed[canonicalAvail]++;
         } else {
           newAssignments[result.userId] = {
             ...result,
@@ -291,15 +309,16 @@ export default function ComponentAssignment() {
   };
 
   const getComponentStats = (component: string) => {
-    const preferred = examResults.filter((r: any) => r.preferredComponent === component);
-    const assigned = Object.values(assignments).filter((a: any) => a.assignedComponent === component);
-    const limit = slotLimits[component as NstpComponent];
+    const canonical = toCanonicalComponentType(component);
+    const preferred = examResults.filter((r: any) => toCanonicalComponentType(r.preferredComponent) === canonical);
+    const assigned = Object.values(assignments).filter((a: any) => toCanonicalComponentType(a.assignedComponent) === canonical);
+    const limit = canonical ? (slotLimits[canonical] ?? 0) : 0;
 
     return {
       preferred: preferred.length,
       assigned: assigned.length,
       limit,
-      available: limit - assigned.length,
+      available: Math.max(0, limit - assigned.length),
       avgScore: assigned.length > 0
         ? Math.round((assigned as any[]).reduce((sum: number, a: any) => sum + a.score, 0) / assigned.length)
         : 0
@@ -311,7 +330,7 @@ export default function ComponentAssignment() {
     : examResults.filter((r: any) => r.preferredComponent === selectedComponent);
 
   const sortedFiltered = [...filteredResults].sort((a: any, b: any) => b.score - a.score);
-  const totalSlots = COMPONENTS.reduce((sum, component) => sum + (slotLimits[component as NstpComponent] || 0), 0);
+  const totalSlots = CANONICAL_COMPONENTS.reduce((sum, canonical) => sum + (slotLimits[canonical] || 0), 0);
   const assignedCount = Object.values(assignments).filter((assignment: any) => assignment.assignedComponent).length;
   const qualifiedCount = examResults.filter((result: any) => result.score >= qualifyingScore).length;
   const waitlistedCount = Object.values(assignments).filter((assignment: any) => assignment.status === 'waitlisted' || !assignment.assignedComponent).length;
@@ -389,13 +408,15 @@ export default function ComponentAssignment() {
                 className="w-full px-4 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500"
               />
             </div>
-            {COMPONENTS.map(component => (
-              <div key={component}>
-                <label className="block text-sm font-medium text-slate-700 mb-2 dark:text-slate-300">{component}</label>
+            {CANONICAL_COMPONENTS.map(canonical => (
+              <div key={canonical}>
+                <label className="block text-sm font-medium text-slate-700 mb-2 dark:text-slate-300">
+                  {COMPONENT_DISPLAY_NAMES[canonical]}
+                </label>
                 <input
                   type="number"
-                  value={slotLimits[component as keyof typeof slotLimits]}
-                  onChange={(e) => handleSlotChange(component, e.target.value)}
+                  value={slotLimits[canonical] ?? 0}
+                  onChange={(e) => handleSlotChange(canonical, e.target.value)}
                   className="w-full px-4 py-2 border border-slate-300 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-500"
                   min="0"
                 />
@@ -573,7 +594,8 @@ export default function ComponentAssignment() {
               <tbody>
                 {sortedFiltered.map((result: any, idx: number) => {
                   const assignment = (assignments as Record<string, any>)[result.userId];
-                  const isPriority = idx < slotLimits[result.preferredComponent as NstpComponent];
+                  const canonicalPref = toCanonicalComponentType(result.preferredComponent);
+                  const isPriority = canonicalPref ? idx < (slotLimits[canonicalPref] ?? 0) : false;
 
                   return (
                     <tr key={result.userId} className="border-b border-slate-100 hover:bg-blue-50/70 transition-colors dark:border-slate-800 dark:hover:bg-slate-800/40">

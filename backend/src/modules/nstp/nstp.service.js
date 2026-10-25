@@ -3,6 +3,7 @@ import prisma from '../../db/prisma.js';
 import { adminAccountSelect, adminStudentSelect, pendingRegistrationSelect, toAdminAccountDto, toAdminStudentDto } from '../auth/user.dto.js';
 import { assertPlaintextPassword } from '../auth/passwords.js';
 import { normalizeModuleUrls } from './module-url.validation.js';
+import { normalizeSlotLimits, toCanonicalComponentType } from './component-normalization.js';
 
 const now = () => new Date().toISOString();
 
@@ -806,7 +807,15 @@ export async function listAdminResource(name, filters = {}) {
   if (name === 'attendance-records') return simpleList(prisma.attendanceRecord);
   if (name === 'attendance-sessions') return simpleList(prisma.attendanceSession);
   if (name === 'qualifying-results') return simpleList(prisma.qualifyingExamResult);
-  if (name === 'component-state') return withDatabase(name, () => prisma.componentApplicationState.findMany());
+  if (name === 'component-state') {
+    return withDatabase(name, async () => {
+      const records = await prisma.componentApplicationState.findMany();
+      return records.map((rec) => ({
+        ...rec,
+        slotLimits: normalizeSlotLimits(rec.slotLimits),
+      }));
+    });
+  }
   if (name === 'audit-log') return simpleList(prisma.auditLogEntry);
 
   return [];
@@ -1058,7 +1067,17 @@ export async function upsertAdminResource(name, lookup, payload) {
     if (name === 'attendance-records') return await upsertSimple(prisma.attendanceRecord);
     if (name === 'attendance-sessions') return await upsertSimple(prisma.attendanceSession);
     if (name === 'qualifying-results') return await upsertSimple(prisma.qualifyingExamResult);
-    if (name === 'component-state') return await upsertSimple(prisma.componentApplicationState);
+    if (name === 'component-state') {
+      const statePayload = {
+        ...nextPayload,
+        slotLimits: normalizeSlotLimits(nextPayload.slotLimits),
+      };
+      return await prisma.componentApplicationState.upsert({
+        where: { id: statePayload.id || 'default' },
+        update: statePayload,
+        create: { id: statePayload.id || 'default', ...statePayload },
+      });
+    }
     if (name === 'audit-log') return await upsertSimple(prisma.auditLogEntry);
   } catch (error) {
     console.warn(`Prisma ${name} upsert failed: ${error?.message || error}`);
