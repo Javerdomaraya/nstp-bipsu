@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { enforceTestDatabase } from './test-db-guard.js';
 
 process.env.DATABASE_URL ||= 'postgresql://neondb_owner:npg_2wuOR3NhbaAF@ep-long-truth-a1cnk55w.ap-southeast-1.aws.neon.tech/nstp_fresh_test?sslmode=require';
+enforceTestDatabase();
 
 const { default: prisma } = await import('../src/db/prisma.js');
 const {
