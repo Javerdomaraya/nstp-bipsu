@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { FileText, Clock, AlertCircle, Award, LogOut } from 'lucide-react';
-import { autoAssignQualifyingResult, loadQualifyingExamResults, saveQualifyingExamResults, syncStudentAccessFromQualifyingResult, NstpComponent, QualifyingExamResult } from '../../data/nstpData';
+import { loadQualifyingExamResults, saveQualifyingExamResults, syncStudentAccessFromQualifyingResult, NstpComponent, QualifyingExamResult } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
 import { apiPost } from '../../services/apiClient';
 import { toast } from 'sonner';
@@ -15,86 +15,33 @@ export type QualifyingQuestion = {
 export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout }: { user: StudentUser; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void }) {
   const [questions, setQuestions] = useState<QualifyingQuestion[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
+  const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [answers, setAnswers] = useState<Record<number, number>>({});
-  const [timeLeft, setTimeLeft] = useState(3600); // 60 minutes
+  const [timeLeft, setTimeLeft] = useState(3600);
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
+  const answersRef = useRef<Record<number, number>>({});
+  const questionsRef = useRef<QualifyingQuestion[]>([]);
+  const attemptIdRef = useRef<string | null>(null);
+  const submittedRef = useRef(false);
 
-  useEffect(() => {
-    let mounted = true;
+  answersRef.current = answers;
+  questionsRef.current = questions;
+  attemptIdRef.current = attemptId;
+  submittedRef.current = submitted;
 
-    async function startExamSession() {
-      try {
-        const response = await apiPost<{
-          success: boolean;
-          data: {
-            attemptId: string;
-            examTitle: string;
-            expiresAt: string;
-            questions: QualifyingQuestion[];
-          };
-        } | null>('/nstp/students/me/qualifying-exam/start', { preferredComponent }, null);
-
-        if (!mounted) return;
-
-        if (response?.data?.questions) {
-          setQuestions(response.data.questions);
-          setAttemptId(response.data.attemptId);
-          if (response.data.expiresAt) {
-            const remaining = Math.max(0, Math.floor((new Date(response.data.expiresAt).getTime() - Date.now()) / 1000));
-            setTimeLeft(remaining);
-          }
-        } else {
-          setLoadError('Unable to load qualifying exam questions. Please try again.');
-        }
-      } catch (err: any) {
-        if (!mounted) return;
-        setLoadError(err?.message || 'Unable to start qualifying exam.');
-      } finally {
-        if (mounted) setLoading(false);
-      }
-    }
-
-    startExamSession();
-
-    return () => {
-      mounted = false;
-    };
-  }, [preferredComponent]);
-
-  useEffect(() => {
-    if (loading || submitted || timeLeft <= 0) return;
-
-    const timer = setInterval(() => {
-      setTimeLeft(t => {
-        if (t <= 1) {
-          handleSubmit();
-          return 0;
-        }
-        return t - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(timer);
-  }, [loading, submitted, timeLeft]);
-
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const handleSubmit = async () => {
-    if (submitted) return;
+  const handleSubmit = useCallback(async () => {
+    if (submittedRef.current) return;
+    submittedRef.current = true;
 
     try {
       const payload = {
-        attemptId,
+        attemptId: attemptIdRef.current,
         preferredComponent,
-        answers: Object.entries(answers).map(([qIdx, optIdx]) => ({
-          questionId: questions[Number(qIdx)]?.id || `q-${qIdx}`,
+        answers: Object.entries(answersRef.current).map(([qIdx, optIdx]) => ({
+          questionId: questionsRef.current[Number(qIdx)]?.id || `q-${qIdx}`,
           optionIndex: optIdx,
         })),
       };
@@ -137,10 +84,79 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
         toast.success('Exam submitted successfully.');
       } else {
         toast.error('Unable to submit exam. Please try again.');
+        submittedRef.current = false;
       }
     } catch (err: any) {
       toast.error(err?.message || 'Could not submit exam. Please try again.');
+      submittedRef.current = false;
     }
+  }, [preferredComponent, user.id, user.name, user.email]);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function startExamSession() {
+      try {
+        const response = await apiPost<{
+          success: boolean;
+          data: {
+            attemptId: string;
+            examTitle: string;
+            expiresAt: string;
+            questions: QualifyingQuestion[];
+          };
+        } | null>('/nstp/students/me/qualifying-exam/start', { preferredComponent }, null);
+
+        if (!mounted) return;
+
+        if (response?.data?.questions) {
+          setQuestions(response.data.questions);
+          setAttemptId(response.data.attemptId);
+          if (response.data.expiresAt) {
+            setExpiresAt(response.data.expiresAt);
+            const remaining = Math.max(0, Math.floor((new Date(response.data.expiresAt).getTime() - Date.now()) / 1000));
+            setTimeLeft(remaining);
+          }
+        } else {
+          setLoadError('Unable to load qualifying exam questions. Please try again.');
+        }
+      } catch (err: any) {
+        if (!mounted) return;
+        setLoadError(err?.message || 'Unable to start qualifying exam.');
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    }
+
+    startExamSession();
+
+    return () => {
+      mounted = false;
+    };
+  }, [preferredComponent]);
+
+  // Server-authoritative timer: computes remaining seconds directly against server expiresAt
+  useEffect(() => {
+    if (loading || submitted || !expiresAt) return;
+
+    const updateRemaining = () => {
+      const remaining = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
+      setTimeLeft(remaining);
+      if (remaining <= 0) {
+        handleSubmit();
+      }
+    };
+
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+
+    return () => clearInterval(timer);
+  }, [loading, submitted, expiresAt, handleSubmit]);
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   if (submitted) {

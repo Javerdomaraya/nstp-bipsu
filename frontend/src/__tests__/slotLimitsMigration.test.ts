@@ -10,7 +10,6 @@ import {
   DEFAULT_COMPONENT_APPLICATION_STATE,
   loadComponentApplicationState,
   saveComponentApplicationState,
-  autoAssignQualifyingResult,
   COMPONENT_APPLICATION_STATE_KEY,
   type QualifyingExamResult,
 } from '../data/nstpData';
@@ -92,44 +91,5 @@ describe('Component normalization and slot limits migration', () => {
     expect(loaded.slotLimits.MTS_NAVY).toBe(DEFAULT_CANONICAL_SLOT_LIMITS.MTS_NAVY);
     expect(loaded.qualifyingScore).toBe(75);
     expect(loaded.applicationClosed).toBe(true);
-  });
-
-  it('autoAssignQualifyingResult correctly checks capacity using canonical component identifiers', async () => {
-    // Set up slot limits with only 1 slot for Coast Guard
-    await saveComponentApplicationState({
-      slotLimits: {
-        CWTS_COAST_GUARD: 1,
-      } as any,
-      qualifyingScore: 70,
-      applicationClosed: false,
-    });
-
-    const student1: QualifyingExamResult = {
-      userId: 'user-1',
-      userName: 'Alice',
-      userEmail: 'alice@bipsu.edu.ph',
-      preferredComponent: 'CWTS (Coast Guard)',
-      score: 85,
-      timestamp: new Date().toISOString(),
-    };
-
-    // First student takes the single slot
-    const assigned1 = autoAssignQualifyingResult(student1, []);
-    expect(assigned1.status).toBe('assigned-preferred');
-    expect(assigned1.assignedComponent).toBe('CWTS (Coast Guard)');
-
-    // Second student with same preferred component gets waitlisted
-    const student2: QualifyingExamResult = {
-      userId: 'user-2',
-      userName: 'Bob',
-      userEmail: 'bob@bipsu.edu.ph',
-      preferredComponent: 'CWTS (Coast Guard)',
-      score: 80,
-      timestamp: new Date().toISOString(),
-    };
-
-    const assigned2 = autoAssignQualifyingResult(student2, [assigned1]);
-    expect(assigned2.status).toBe('waitlisted');
-    expect(assigned2.assignedComponent).toBeNull();
   });
 });

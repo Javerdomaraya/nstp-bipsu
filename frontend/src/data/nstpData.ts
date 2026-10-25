@@ -950,39 +950,6 @@ export function syncStudentAccessFromQualifyingResults(results: QualifyingExamRe
   results.forEach(syncStudentAccessFromQualifyingResult);
 }
 
-export function autoAssignQualifyingResult(result: QualifyingExamResult, existingResults: QualifyingExamResult[] = loadQualifyingExamResults()) {
-  const state = loadComponentApplicationState();
-  const preferred = result.preferredComponent;
-  const canonicalPreferred = toCanonicalComponentType(preferred) || 'CWTS';
-  const assignedToPreferred = existingResults.filter((row) => {
-    if (row.userId === result.userId) return false;
-    const rowCanonical = toCanonicalComponentType(row.assignedComponent);
-    return (
-      rowCanonical === canonicalPreferred &&
-      row.status &&
-      !['waitlisted', 'not-qualified'].includes(row.status)
-    );
-  }).length;
-  const preferredSlots = state.slotLimits[canonicalPreferred] ?? 0;
-  const passed = result.score >= state.qualifyingScore;
-
-  if (passed && assignedToPreferred < preferredSlots) {
-    return {
-      ...result,
-      assignedComponent: preferred,
-      rank: assignedToPreferred + 1,
-      status: 'assigned-preferred' as const,
-    };
-  }
-
-  return {
-    ...result,
-    assignedComponent: null,
-    rank: undefined,
-    status: passed ? 'waitlisted' as const : 'not-qualified' as const,
-  };
-}
-
 export function loadPendingStudentRegistrations(): PendingStudentRegistration[] {
   if (typeof window === 'undefined') return [];
   ensureNstpSeedData();
