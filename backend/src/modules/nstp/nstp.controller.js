@@ -417,12 +417,18 @@ export async function startMyQualifyingExam(req, res) {
   }
 
   // 1. Verify an active qualifying application cycle is currently open
-  const appState = await prisma.componentApplicationState.findFirst({
+  const openStates = await prisma.componentApplicationState.findMany({
     where: { applicationClosed: false },
-    orderBy: { updatedAt: 'desc' },
   });
 
-  if (!appState || appState.applicationClosed || !appState.schoolYear || !appState.semester) {
+  if (openStates.length === 0) {
+    return sendError(res, 'No active qualifying application cycle is currently open.', 409);
+  }
+  if (openStates.length > 1) {
+    return sendError(res, 'Multiple active qualifying application cycles found.', 500);
+  }
+  const appState = openStates[0];
+  if (!appState.schoolYear || !appState.semester) {
     return sendError(res, 'No active qualifying application cycle is currently open.', 409);
   }
 
@@ -682,35 +688,36 @@ export async function submitMyQualifyingExam(req, res) {
             locked = await tx.$queryRaw`
               SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester"
               FROM component_application_state
-              ORDER BY "updatedAt" DESC
-              LIMIT 1
+              WHERE "applicationClosed" = false
               FOR UPDATE
             `;
           } catch (rawErr) {
             if (isLockTimeoutError(rawErr)) {
               throw rawErr;
             }
-            appState = await tx.componentApplicationState.findFirst({
-              orderBy: { updatedAt: 'desc' },
+            const fallbackRows = await tx.componentApplicationState.findMany({
+              where: { applicationClosed: false },
             });
+            locked = fallbackRows;
           }
 
           if (Array.isArray(locked)) {
             if (locked.length === 0) {
               const notFoundError = new Error("Component application state row not found for row locking.");
               notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
+              notFoundError.statusCode = 409;
               throw notFoundError;
+            }
+            if (locked.length > 1) {
+              const multipleRowsError = new Error("Multiple active component application state rows found for row locking.");
+              multipleRowsError.code = 'ROW_LOCK_MULTIPLE_ROWS';
+              multipleRowsError.statusCode = 500;
+              throw multipleRowsError;
             }
             appState = locked[0];
           }
 
-          if (!appState) {
-            const notFoundError = new Error("Component application state row not found for row locking.");
-            notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
-            throw notFoundError;
-          }
-
-          if (appState.applicationClosed || !appState.schoolYear || !appState.semester) {
+          if (!appState || !appState.schoolYear || !appState.semester) {
             const closedErr = new Error('No active qualifying application cycle is currently open.');
             closedErr.statusCode = 409;
             throw closedErr;
@@ -820,10 +827,14 @@ export async function submitMyQualifyingExam(req, res) {
 
       return sendSuccess(res, result, 201);
     } catch (error) {
-      if (isLockTimeoutError(error) && attemptNum < MAX_LOCK_RETRIES) {
-        const delayMs = 50 * Math.pow(2, attemptNum);
-        await new Promise((r) => setTimeout(r, delayMs));
-        continue;
+      if (isLockTimeoutError(error)) {
+        if (attemptNum < MAX_LOCK_RETRIES) {
+          const delayMs = 50 * Math.pow(2, attemptNum);
+          await new Promise((r) => setTimeout(r, delayMs));
+          continue;
+        }
+        res.setHeader?.('Retry-After', '2') || (res.headers = { ...(res.headers || {}), 'Retry-After': '2' });
+        return sendError(res, 'System is temporarily busy allocating component placement quotas. Please retry shortly.', 503);
       }
       if (error.statusCode === 409) {
         return sendError(res, error.message || 'No active qualifying application cycle is currently open.', 409);

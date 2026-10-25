@@ -1,8 +1,10 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { afterEach, test } from 'node:test';
 
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 const { default: prisma } = await import('../src/db/prisma.js');
 const { evaluateGrade, resolveGradeInput } = await import('../src/modules/grades/grade.policy.js');

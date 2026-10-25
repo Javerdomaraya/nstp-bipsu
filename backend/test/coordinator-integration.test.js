@@ -1,3 +1,4 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 // Coordinator scope integration tests.
 //
 // These exercise the real Express app and the real middleware chain; only the
@@ -11,7 +12,8 @@ import { after, afterEach, before, test } from 'node:test';
 import jwt from 'jsonwebtoken';
 
 process.env.JWT_SECRET = 'test-only-jwt-secret';
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 // src/db/prisma.js intentionally reuses `globalThis.prisma` when one is already
 // present, so seeding it here means `new PrismaClient()` is never constructed.

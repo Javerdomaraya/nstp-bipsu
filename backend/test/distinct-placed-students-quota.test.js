@@ -1,7 +1,9 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 const { countDistinctPlacedStudents } = await import('../src/modules/nstp/nstp.service.js');
 

@@ -1,7 +1,9 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
 
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 const { default: prisma } = await import('../src/db/prisma.js');
 const { overrideAssessmentAttempt } = await import('../src/modules/nstp/nstp.service.js');

@@ -1,6 +1,6 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { enforceTestDatabase } from './test-db-guard.js';
 
 process.env.DATABASE_URL ||= 'postgresql://neondb_owner:npg_2wuOR3NhbaAF@ep-long-truth-a1cnk55w.ap-southeast-1.aws.neon.tech/nstp_fresh_test?sslmode=require';
 enforceTestDatabase();
@@ -16,6 +16,11 @@ function mockResponse() {
   const res = {
     statusCode: 200,
     body: null,
+    headers: {},
+    setHeader(key, val) {
+      this.headers[key] = val;
+      return this;
+    },
     status(code) {
       this.statusCode = code;
       return this;
@@ -44,10 +49,9 @@ test('real postgres: lock contention recovers via retries when row lock is relea
     const openSY = '2026-2027';
     const openSem = '1st Semester';
 
-    await prisma.componentApplicationState.upsert({
-      where: { id: 'default' },
-      update: { schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
-      create: { id: 'default', schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
+    await prisma.componentApplicationState.deleteMany({});
+    await prisma.componentApplicationState.create({
+      data: { id: `app-state-${Date.now()}`, schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
     });
 
     const exam = await prisma.exam.findFirst({
@@ -93,24 +97,21 @@ test('real postgres: lock contention recovers via retries when row lock is relea
       },
     });
 
-    // Start a blocker transaction on blockerPrisma that acquires FOR UPDATE on component_application_state
     let blockerStarted = false;
     let releaseBlocker = null;
     const blockerPromise = blockerPrisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE id = \'default\' FOR UPDATE;');
+      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "applicationClosed" = false FOR UPDATE;');
       blockerStarted = true;
-      // Hold lock until released
       await new Promise((resolve) => {
         releaseBlocker = resolve;
       });
     }, { timeout: 15000 });
 
-    // Wait until blocker transaction has acquired the lock
     while (!blockerStarted) {
       await new Promise((r) => setTimeout(r, 20));
     }
 
-    // Schedule blocker release after 400ms (so attempt 1 with 250ms lock_timeout fails, but retry succeeds)
+    // Release after 400ms so attempt 1 with 250ms lock_timeout fails, but retry succeeds
     setTimeout(() => {
       if (releaseBlocker) releaseBlocker();
     }, 400);
@@ -145,7 +146,7 @@ test('real postgres: lock contention recovers via retries when row lock is relea
   }
 });
 
-test('real postgres: lock contention exhausts max retries when lock is held longer than all retry timeouts', async () => {
+test('real postgres: lock-timeout exhaustion returns 503 with Retry-After', async () => {
   const blockerPrisma = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } });
   await blockerPrisma.$connect();
 
@@ -153,10 +154,9 @@ test('real postgres: lock contention exhausts max retries when lock is held long
     const openSY = '2026-2027';
     const openSem = '1st Semester';
 
-    await prisma.componentApplicationState.upsert({
-      where: { id: 'default' },
-      update: { schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
-      create: { id: 'default', schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
+    await prisma.componentApplicationState.deleteMany({});
+    await prisma.componentApplicationState.create({
+      data: { id: `app-state-${Date.now()}`, schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
     });
 
     const exam = await prisma.exam.findFirst({
@@ -204,7 +204,7 @@ test('real postgres: lock contention exhausts max retries when lock is held long
     let blockerStarted = false;
     let releaseBlocker = null;
     const blockerPromise = blockerPrisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE id = \'default\' FOR UPDATE;');
+      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "applicationClosed" = false FOR UPDATE;');
       blockerStarted = true;
       await new Promise((resolve) => {
         releaseBlocker = resolve;
@@ -226,18 +226,16 @@ test('real postgres: lock contention exhausts max retries when lock is held long
     };
     const res = mockResponse();
 
-    let caughtError = null;
     try {
       await submitMyQualifyingExam(req, res);
-    } catch (err) {
-      caughtError = err;
     } finally {
       if (releaseBlocker) releaseBlocker();
       await blockerPromise;
     }
 
-    assert.ok(caughtError, 'Expected submitMyQualifyingExam to throw after exhausting retries under sustained lock contention');
-    assert.equal(isLockTimeoutError(caughtError), true, `Expected error to be lock timeout, got: ${caughtError.message}`);
+    assert.equal(res.statusCode, 503, `Expected 503 on lock exhaustion, got ${res.statusCode}: ${JSON.stringify(res.body)}`);
+    assert.equal(res.headers['Retry-After'], '2');
+    assert.match(res.body.error, /temporarily busy/i);
   } finally {
     await blockerPrisma.$disconnect();
   }

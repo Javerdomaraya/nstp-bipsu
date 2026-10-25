@@ -1,3 +1,4 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { after, afterEach, before, test } from 'node:test';
@@ -5,7 +6,8 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcrypt';
 
 process.env.JWT_SECRET = 'test-only-jwt-secret';
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 const { createApp } = await import('../src/app.js');
 const { default: prisma } = await import('../src/db/prisma.js');

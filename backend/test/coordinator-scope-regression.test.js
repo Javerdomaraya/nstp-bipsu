@@ -1,3 +1,4 @@
+import { enforceTestDatabase } from './test-db-guard.js';
 // Regression suite for the coordinator scope fixes (module fail-open and the
 // coordinator training-groups endpoint).
 //
@@ -15,7 +16,8 @@ import { after, afterEach, before, test } from 'node:test';
 import jwt from 'jsonwebtoken';
 
 process.env.JWT_SECRET = 'test-only-jwt-secret';
-process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/test';
+process.env.DATABASE_URL ||= 'postgresql://test:test@localhost:5432/nstp_test';
+enforceTestDatabase();
 
 // src/db/prisma.js reuses `globalThis.prisma` when one is present, so seeding it
 // before the app is imported means `new PrismaClient()` is never constructed.
