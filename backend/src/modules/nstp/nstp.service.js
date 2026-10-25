@@ -1281,9 +1281,18 @@ export async function placeStudent(tx, {
   let cycleSchoolYear = schoolYear;
   let cycleSemester = semester;
   if (cycleSchoolYear === undefined || cycleSemester === undefined) {
-    const appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+    const appState = await tx.componentApplicationState.findFirst({
+      where: { applicationClosed: false },
+      orderBy: { updatedAt: 'desc' },
+    });
     if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
     if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
+  }
+
+  if (!cycleSchoolYear || !cycleSemester) {
+    const err = new Error('Cannot place student: no active qualifying application cycle is open.');
+    err.statusCode = 409;
+    throw err;
   }
 
   const component = await tx.nSTPComponent.findFirst({
@@ -1375,9 +1384,18 @@ export async function countDistinctPlacedStudents(tx, {
   let cycleSchoolYear = schoolYear;
   let cycleSemester = semester;
   if (cycleSchoolYear === undefined || cycleSemester === undefined) {
-    const appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+    const appState = await tx.componentApplicationState.findFirst({
+      where: { applicationClosed: false },
+      orderBy: { updatedAt: 'desc' },
+    });
     if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
     if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
+  }
+
+  if (!cycleSchoolYear || !cycleSemester) {
+    const err = new Error('Cannot place student: no active qualifying application cycle is open.');
+    err.statusCode = 409;
+    throw err;
   }
 
   const where = {

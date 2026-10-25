@@ -411,7 +411,17 @@ export async function startMyQualifyingExam(req, res) {
     return sendError(res, 'Student profile not found.', 404);
   }
 
-  // 1. Verify 25 common module hours completed
+  // 1. Verify an active qualifying application cycle is currently open
+  const appState = await prisma.componentApplicationState.findFirst({
+    where: { applicationClosed: false },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  if (!appState || appState.applicationClosed || !appState.schoolYear || !appState.semester) {
+    return sendError(res, 'No active qualifying application cycle is currently open.', 409);
+  }
+
+  // 2. Verify 25 common module hours completed
   const completedProgress = await prisma.moduleProgress.findMany({
     where: {
       studentId,
@@ -653,17 +663,25 @@ export async function submitMyQualifyingExam(req, res) {
           let appState = null;
           let locked = null;
           try {
-            locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
+            locked = await tx.$queryRaw`
+              SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester"
+              FROM component_application_state
+              ORDER BY "updatedAt" DESC
+              LIMIT 1
+              FOR UPDATE
+            `;
           } catch (rawErr) {
             if (isLockTimeoutError(rawErr)) {
               throw rawErr;
             }
-            appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+            appState = await tx.componentApplicationState.findFirst({
+              orderBy: { updatedAt: 'desc' },
+            });
           }
 
           if (Array.isArray(locked)) {
             if (locked.length === 0) {
-              const notFoundError = new Error("Component application state row 'default' not found for row locking.");
+              const notFoundError = new Error("Component application state row not found for row locking.");
               notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
               throw notFoundError;
             }
@@ -671,9 +689,15 @@ export async function submitMyQualifyingExam(req, res) {
           }
 
           if (!appState) {
-            const notFoundError = new Error("Component application state row 'default' not found for row locking.");
+            const notFoundError = new Error("Component application state row not found for row locking.");
             notFoundError.code = 'ROW_LOCK_ZERO_ROWS';
             throw notFoundError;
+          }
+
+          if (appState.applicationClosed || !appState.schoolYear || !appState.semester) {
+            const closedErr = new Error('No active qualifying application cycle is currently open.');
+            closedErr.statusCode = 409;
+            throw closedErr;
           }
 
       const slotLimits = normalizeSlotLimits(appState?.slotLimits);
@@ -784,6 +808,9 @@ export async function submitMyQualifyingExam(req, res) {
         const delayMs = 50 * Math.pow(2, attemptNum);
         await new Promise((r) => setTimeout(r, delayMs));
         continue;
+      }
+      if (error.statusCode === 409) {
+        return sendError(res, error.message || 'No active qualifying application cycle is currently open.', 409);
       }
       if (error.statusCode === 400 || error.message?.includes('already been submitted') || error.message?.includes('already been completed')) {
         return sendError(res, error.message || 'Exam attempt has already been submitted or completed.', 400);

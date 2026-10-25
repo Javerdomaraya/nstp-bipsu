@@ -405,6 +405,7 @@ model Enrollment {
   updatedAt   DateTime         @updatedAt
 
   @@unique([studentId, componentId, sectionId])
+  @@unique([studentId, componentId, schoolYear, semester])
   @@index([studentId])
   @@index([componentId])
   @@index([sectionId])
