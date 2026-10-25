@@ -66,7 +66,34 @@ test('the expectation list and the orphan gate describe the same relationships',
     [],
     'foreign key expected to exist but its data is never checked for orphans',
   );
-  assert.equal(expected.size, 38);
+  assert.equal(expected.size, EXPECTED_FOREIGN_KEYS.length);
+
+  // Named-constraint checks
+  assert.ok(expected.has('qualifying_exam_attempt.userId -> user'), 'qualifying_exam_attempt.userId -> user must exist');
+  assert.ok(expected.has('qualifying_exam_attempt.examId -> exam'), 'qualifying_exam_attempt.examId -> exam must exist');
+  assert.ok(expected.has('coordinator_profile.userId -> user'), 'coordinator_profile.userId -> user must exist');
+  assert.ok(expected.has('coordinator_profile.componentId -> nstp_component'), 'coordinator_profile.componentId -> nstp_component must exist');
+  assert.ok(expected.has('student_profile.userId -> user'), 'student_profile.userId -> user must exist');
+  assert.ok(expected.has('enrollment.studentId -> student_profile'), 'enrollment.studentId -> student_profile must exist');
+  assert.ok(expected.has('submission.studentId -> student_profile'), 'submission.studentId -> student_profile must exist');
+});
+
+test('the qualifying exam attempt foreign keys are pinned explicitly with correct ON DELETE actions', () => {
+  const find = (child, column) =>
+    EXPECTED_FOREIGN_KEYS.find(([c, col]) => c === child && col === column);
+
+  assert.deepEqual(find('qualifying_exam_attempt', 'userId'), [
+    'qualifying_exam_attempt',
+    'userId',
+    'user',
+    'c',
+  ]);
+  assert.deepEqual(find('qualifying_exam_attempt', 'examId'), [
+    'qualifying_exam_attempt',
+    'examId',
+    'exam',
+    'n',
+  ]);
 });
 
 test('the two authorization-critical coordinator keys are pinned explicitly', () => {
@@ -105,12 +132,15 @@ test('the check is a BLOCKER and requires the schema it inspects', () => {
   // Requiring the tables makes a partially-migrated database skip, and a skipped
   // BLOCKER blocks. Without this the check would run against a half-built schema
   // and report every absent table as a missing foreign key.
-  assert.equal(REQUIRED_TABLES.length, 18);
-  assert.equal(REQUIRED_COLUMNS.length, 38);
+  assert.equal(REQUIRED_TABLES.length, new Set(EXPECTED_FOREIGN_KEYS.flatMap(([c, , p]) => [c, p])).size);
+  assert.equal(REQUIRED_COLUMNS.length, EXPECTED_FOREIGN_KEYS.length);
   assert.deepEqual(FOREIGN_KEY_INTEGRITY_CHECK.tables, REQUIRED_TABLES);
   assert.deepEqual(FOREIGN_KEY_INTEGRITY_CHECK.columns, REQUIRED_COLUMNS);
   assert.ok(REQUIRED_TABLES.includes('coordinator_profile'));
   assert.ok(REQUIRED_COLUMNS.includes('coordinator_profile.userId'));
+  assert.ok(REQUIRED_TABLES.includes('qualifying_exam_attempt'));
+  assert.ok(REQUIRED_COLUMNS.includes('qualifying_exam_attempt.userId'));
+  assert.ok(REQUIRED_COLUMNS.includes('qualifying_exam_attempt.examId'));
 });
 
 test('the check body carries no LIMIT of its own', () => {

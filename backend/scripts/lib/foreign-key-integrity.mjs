@@ -90,6 +90,8 @@ export const EXPECTED_FOREIGN_KEYS = Object.freeze([
   ['module_progress',     'studentId',          'student_profile',     'c'],
   ['payment',             'targetEnrollmentId', 'enrollment',          'r'],
   ['payment',             'userId',             'user',                'r'],
+  ['qualifying_exam_attempt', 'examId',          'exam',                'n'],
+  ['qualifying_exam_attempt', 'userId',          'user',                'c'],
   ['question',            'examId',             'exam',                'c'],
   ['question',            'quizId',             'quiz',                'c'],
   ['quiz',                'moduleId',           'module',              'c'],

@@ -118,6 +118,7 @@ model User {
   following          Follow[]            @relation("FollowFollower")
   followers          Follow[]            @relation("FollowTarget")
   payments           Payment[]
+  qualifyingAttempts QualifyingExamAttempt[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -336,6 +337,7 @@ model Exam {
   questions    Question[]
   submissions  Submission[]
   grades       Grade[]
+  qualifyingAttempts QualifyingExamAttempt[]
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
 
@@ -637,10 +639,13 @@ model QualifyingExamAttempt {
   status             String    @default("STARTED")
   assignedComponent  String?
   rank               Int?
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exam               Exam?     @relation(fields: [examId], references: [id], onDelete: SetNull)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @default(now()) @updatedAt
 
   @@index([userId])
+  @@index([examId])
   @@index([preferredComponent])
   @@index([status])
   @@map("qualifying_exam_attempt")

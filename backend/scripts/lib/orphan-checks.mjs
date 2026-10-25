@@ -59,6 +59,8 @@ export const FOREIGN_KEY_RELATIONSHIPS = Object.freeze([
   ['follow', 'targetUserId', 'user'],
   ['payment', 'userId', 'user'],
   ['payment', 'targetEnrollmentId', 'enrollment'],
+  ['qualifying_exam_attempt', 'userId', 'user'],
+  ['qualifying_exam_attempt', 'examId', 'exam'],
   // module_progress declares both foreign keys inline in its creating migration
   // (module_progress_studentId_fkey, module_progress_moduleId_fkey, both
   // CASCADE), so it is covered here for completeness rather than suspicion.
