@@ -418,7 +418,7 @@ export async function startMyQualifyingExam(req, res) {
 
   // 1. Verify an active qualifying application cycle is currently open
   const openStates = await prisma.componentApplicationState.findMany({
-    where: { applicationClosed: false },
+    where: { isCurrent: true },
   });
 
   if (openStates.length === 0) {
@@ -428,7 +428,7 @@ export async function startMyQualifyingExam(req, res) {
     return sendError(res, 'Multiple active qualifying application cycles found.', 500);
   }
   const appState = openStates[0];
-  if (!appState.schoolYear || !appState.semester) {
+  if (appState.applicationClosed || !appState.schoolYear || !appState.semester) {
     return sendError(res, 'No active qualifying application cycle is currently open.', 409);
   }
 
@@ -507,7 +507,10 @@ export async function startMyQualifyingExam(req, res) {
 
   // 3. Retake policy: cannot exceed allowed attempts (1 attempt allowed)
   const existingAttempts = await prisma.qualifyingExamAttempt.count({
-    where: { userId: req.user.id },
+    where: {
+      userId: req.user.id,
+      status: { not: 'VOIDED' },
+    },
   });
   if (existingAttempts >= 1) {
     return sendError(res, 'Cannot exceed maximum allowed qualifying exam attempts (maximum 1 attempt).', 400);
@@ -686,9 +689,9 @@ export async function submitMyQualifyingExam(req, res) {
           let locked = null;
           try {
             locked = await tx.$queryRaw`
-              SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester"
+              SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester", "isCurrent"
               FROM component_application_state
-              WHERE "applicationClosed" = false
+              WHERE "isCurrent" = true
               FOR UPDATE
             `;
           } catch (rawErr) {
@@ -696,7 +699,7 @@ export async function submitMyQualifyingExam(req, res) {
               throw rawErr;
             }
             const fallbackRows = await tx.componentApplicationState.findMany({
-              where: { applicationClosed: false },
+              where: { isCurrent: true },
             });
             locked = fallbackRows;
           }
@@ -717,7 +720,7 @@ export async function submitMyQualifyingExam(req, res) {
             appState = locked[0];
           }
 
-          if (!appState || !appState.schoolYear || !appState.semester) {
+          if (!appState || appState.applicationClosed || !appState.schoolYear || !appState.semester) {
             const closedErr = new Error('No active qualifying application cycle is currently open.');
             closedErr.statusCode = 409;
             throw closedErr;
@@ -833,7 +836,7 @@ export async function submitMyQualifyingExam(req, res) {
           await new Promise((r) => setTimeout(r, delayMs));
           continue;
         }
-        res.setHeader?.('Retry-After', '2') || (res.headers = { ...(res.headers || {}), 'Retry-After': '2' });
+        res.set('Retry-After', '2');
         return sendError(res, 'System is temporarily busy allocating component placement quotas. Please retry shortly.', 503);
       }
       if (error.statusCode === 409) {
@@ -985,4 +988,67 @@ export async function upsertInstructorAttendanceRecord(req, res) {
     });
   }
   return sendSuccess(res, record, 201);
+}
+
+export async function adminVoidQualifyingExamAttempt(req, res) {
+  const { id } = req.params;
+  const { reason = 'Administrative void' } = req.body || {};
+
+  const attempt = await prisma.qualifyingExamAttempt.findUnique({
+    where: { id },
+  });
+
+  if (!attempt) {
+    return sendError(res, 'Qualifying exam attempt not found.', 404);
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const voidedAttempt = await tx.qualifyingExamAttempt.update({
+      where: { id },
+      data: { status: 'VOIDED' },
+    });
+
+    const student = await tx.studentProfile.findFirst({
+      where: { userId: attempt.userId },
+    });
+
+    if (student) {
+      await tx.studentProfile.update({
+        where: { id: student.id },
+        data: { componentId: null },
+      });
+
+      await tx.enrollment.updateMany({
+        where: { studentId: student.id, status: 'ACTIVE' },
+        data: { status: 'DROPPED' },
+      });
+    }
+
+    await tx.qualifyingExamResult.deleteMany({
+      where: { userId: attempt.userId },
+    });
+
+    const audit = await tx.auditLogEntry.create({
+      data: {
+        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        actor: req.user?.id || 'admin',
+        action: 'QUALIFYING_ATTEMPT_VOID',
+        detail: JSON.stringify({
+          attemptId: id,
+          userId: attempt.userId,
+          previousStatus: attempt.status,
+          previousAssignedComponent: attempt.assignedComponent,
+          reason,
+        }),
+      },
+    });
+
+    return { voidedAttempt, audit };
+  });
+
+  return sendSuccess(res, {
+    message: 'Qualifying exam attempt voided successfully.',
+    attemptId: result.voidedAttempt.id,
+    auditLogId: result.audit.id,
+  });
 }

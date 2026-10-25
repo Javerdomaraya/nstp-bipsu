@@ -41,6 +41,7 @@ test('real postgres: no-submit expiry marks attempt EXPIRED and refuses retake o
       schoolYear: openSY,
       semester: openSem,
       applicationClosed: false,
+      isCurrent: true,
       slotLimits: { CWTS: 100 },
     },
   });

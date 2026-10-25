@@ -661,6 +661,7 @@ model ComponentApplicationState {
   slotLimits        Json
   qualifyingScore   Int      @default(70)
   applicationClosed Boolean  @default(false)
+  isCurrent         Boolean  @default(false)
   schoolYear        String?
   semester          String?
   updatedAt         DateTime @default(now())

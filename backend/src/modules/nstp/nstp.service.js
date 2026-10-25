@@ -1203,6 +1203,9 @@ export async function upsertAdminResource(name, lookup, payload, context = {}) {
         }
 
         const appState = await tx.componentApplicationState.findFirst({
+          where: { isCurrent: true },
+          orderBy: { updatedAt: 'desc' },
+        }) || await tx.componentApplicationState.findFirst({
           orderBy: { updatedAt: 'desc' },
         });
 
@@ -1502,6 +1505,9 @@ export async function placeStudent(tx, {
     }
     if (!cycleSchoolYear || !cycleSemester) {
       const appState = await tx.componentApplicationState.findFirst({
+        where: { isCurrent: true },
+        orderBy: { updatedAt: 'desc' },
+      }) || await tx.componentApplicationState.findFirst({
         orderBy: { updatedAt: 'desc' },
       });
       if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;

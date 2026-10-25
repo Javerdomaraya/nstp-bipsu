@@ -31,7 +31,7 @@ import {
   listAdminAssessments, createAdminAssessment, updateAdminAssessment, removeAdminAssessment,
   listCoordinatorAssessments, createCoordinatorAssessment, updateCoordinatorAssessment, removeCoordinatorAssessment,
   listInstructorAssessments, createInstructorAssessment, updateInstructorAssessment, removeInstructorAssessment,
-  listMyAssessments, listAdminAssessmentAttempts, overrideAdminAssessmentAttempt,
+  listMyAssessments, listAdminAssessmentAttempts, overrideAdminAssessmentAttempt, adminVoidQualifyingExamAttempt,
   listInstructorAttendanceSessions, upsertInstructorAttendanceSession, removeInstructorAttendanceSession,
   listInstructorAttendanceRecords, upsertInstructorAttendanceRecord,
 } from './nstp.controller.js';
@@ -68,6 +68,7 @@ adminResource('training-groups', adminTrainingGroups);
 adminResource('attendance-records', adminAttendanceRecords);
 adminResource('attendance-sessions', adminAttendanceSessions);
 adminResource('qualifying-results', adminQualifyingResults);
+router.post('/admin/qualifying-exam/attempts/:id/void', ...admin, strictWriteLimiter, asyncHandler(adminVoidQualifyingExamAttempt));
 adminResource('component-state', adminComponentState);
 adminResource('audit-log', adminAuditLog);
 router.get('/admin/summary', ...admin, asyncHandler(getAdminSummaryController));

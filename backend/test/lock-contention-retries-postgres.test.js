@@ -1,6 +1,6 @@
-import { enforceTestDatabase } from './test-db-guard.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { enforceTestDatabase } from './test-db-guard.js';
 
 process.env.DATABASE_URL ||= 'postgresql://neondb_owner:npg_2wuOR3NhbaAF@ep-long-truth-a1cnk55w.ap-southeast-1.aws.neon.tech/nstp_fresh_test?sslmode=require';
 enforceTestDatabase();
@@ -17,8 +17,12 @@ function mockResponse() {
     statusCode: 200,
     body: null,
     headers: {},
-    setHeader(key, val) {
-      this.headers[key] = val;
+    set(k, v) {
+      this.headers[k] = String(v);
+      return this;
+    },
+    setHeader(k, v) {
+      this.headers[k] = String(v);
       return this;
     },
     status(code) {
@@ -51,7 +55,14 @@ test('real postgres: lock contention recovers via retries when row lock is relea
 
     await prisma.componentApplicationState.deleteMany({});
     await prisma.componentApplicationState.create({
-      data: { id: `app-state-${Date.now()}`, schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
+      data: {
+        id: `app-state-${Date.now()}`,
+        schoolYear: openSY,
+        semester: openSem,
+        applicationClosed: false,
+        isCurrent: true,
+        slotLimits: { CWTS: 100 },
+      },
     });
 
     const exam = await prisma.exam.findFirst({
@@ -100,7 +111,7 @@ test('real postgres: lock contention recovers via retries when row lock is relea
     let blockerStarted = false;
     let releaseBlocker = null;
     const blockerPromise = blockerPrisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "applicationClosed" = false FOR UPDATE;');
+      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "isCurrent" = true FOR UPDATE;');
       blockerStarted = true;
       await new Promise((resolve) => {
         releaseBlocker = resolve;
@@ -156,7 +167,14 @@ test('real postgres: lock-timeout exhaustion returns 503 with Retry-After', asyn
 
     await prisma.componentApplicationState.deleteMany({});
     await prisma.componentApplicationState.create({
-      data: { id: `app-state-${Date.now()}`, schoolYear: openSY, semester: openSem, applicationClosed: false, slotLimits: { CWTS: 100 } },
+      data: {
+        id: `app-state-${Date.now()}`,
+        schoolYear: openSY,
+        semester: openSem,
+        applicationClosed: false,
+        isCurrent: true,
+        slotLimits: { CWTS: 100 },
+      },
     });
 
     const exam = await prisma.exam.findFirst({
@@ -204,7 +222,7 @@ test('real postgres: lock-timeout exhaustion returns 503 with Retry-After', asyn
     let blockerStarted = false;
     let releaseBlocker = null;
     const blockerPromise = blockerPrisma.$transaction(async (tx) => {
-      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "applicationClosed" = false FOR UPDATE;');
+      await tx.$executeRawUnsafe('SELECT id FROM component_application_state WHERE "isCurrent" = true FOR UPDATE;');
       blockerStarted = true;
       await new Promise((resolve) => {
         releaseBlocker = resolve;
