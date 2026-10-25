@@ -294,6 +294,9 @@ export async function completeMyModule(req, res) {
   });
   if (!module) return sendError(res, 'Module is not available for completion.', 404);
   const requiredAssessments = module.quizzes.filter((quiz) => quiz.data?.type !== 'exam');
+  if (!requiredAssessments.length) {
+    return sendError(res, 'Module has no published assessment and cannot be marked complete.', 409);
+  }
   const incompleteAssessment = requiredAssessments.find((quiz) => {
     const passingScore = Number(quiz.data?.passingScore ?? 70);
     return !quiz.submissions.some((submission) => {
