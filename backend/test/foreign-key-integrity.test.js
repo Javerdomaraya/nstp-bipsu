@@ -86,13 +86,13 @@ test('the qualifying exam attempt foreign keys are pinned explicitly with correc
     'qualifying_exam_attempt',
     'userId',
     'user',
-    'c',
+    'r',
   ]);
   assert.deepEqual(find('qualifying_exam_attempt', 'examId'), [
     'qualifying_exam_attempt',
     'examId',
     'exam',
-    'n',
+    'r',
   ]);
 });
 
