@@ -330,23 +330,46 @@ export async function submitMyAssessment(req, res) {
   const definition = quiz.data || {};
   const legacyQuestions = Array.isArray(definition.questions) ? definition.questions : [];
   const questions = quiz.questions.length ? quiz.questions.map((question) => ({ id: question.id, options: question.options, correctIndex: question.answer?.correctIndex })) : legacyQuestions;
-  const answers = req.validated.body.answers;
+  const answers = req.validated?.body?.answers || req.body?.answers || [];
   const expectedCount = Number(definition.questionsToShow || 0) || questions.length;
+
+  if (expectedCount === 0 || !questions.length) {
+    return sendError(res, 'Assessment has no questions configured.', 400);
+  }
+
+  if (answers.length > expectedCount) {
+    return sendError(res, `Submitted answers count (${answers.length}) exceeds expected count (${expectedCount}).`, 400);
+  }
+
   const uniqueQuestionIds = new Set(answers.map((answer) => answer.questionId));
-  if (!questions.length || answers.length !== expectedCount || uniqueQuestionIds.size !== answers.length) {
+  if (answers.length !== expectedCount || uniqueQuestionIds.size !== answers.length) {
     return sendError(res, 'Invalid assessment answers: count must match expected total and duplicates are rejected.', 400);
   }
+
   const questionMap = new Map(questions.map((question) => [question.id, question]));
   let correct = 0;
   for (const answer of answers) {
     const question = questionMap.get(answer.questionId);
-    if (!question || answer.optionIndex >= question.options.length) return sendError(res, 'Invalid assessment answers.', 400);
+    if (!question || answer.optionIndex >= question.options.length) {
+      return sendError(res, 'Invalid assessment answers: question does not belong to this assessment or option is invalid.', 400);
+    }
     if (Number(answer.optionIndex) === Number(question.correctIndex)) correct += 1;
   }
-  const score = Math.round((correct / expectedCount) * 100);
+
+  const rawScore = Math.round((correct / expectedCount) * 100);
+  const score = Math.min(100, Math.max(0, rawScore));
+
   const attemptNumber = await prisma.submission.count({ where: { studentId: req.student.id, quizId: quiz.id } }) + 1;
+  const servedQuestionIds = questions.slice(0, expectedCount).map((q) => q.id);
   const attempt = await prisma.submission.create({
-    data: { studentId: req.student.id, quizId: quiz.id, content: { answers, attemptNumber }, score, status: 'GRADED', gradedAt: new Date() },
+    data: {
+      studentId: req.student.id,
+      quizId: quiz.id,
+      content: { answers, attemptNumber, servedQuestionIds },
+      score,
+      status: 'GRADED',
+      gradedAt: new Date(),
+    },
   });
   return sendSuccess(res, { id: attempt.id, assessmentId: quiz.id, attemptNumber, score, correct, total: expectedCount, passed: score >= Number(definition.passingScore || 0), submittedAt: attempt.submittedAt }, 201);
 }
@@ -443,6 +466,7 @@ export async function startMyQualifyingExam(req, res) {
       userEmail: req.user.email || '',
       examId: exam.id,
       preferredComponent,
+      answers: { servedQuestionIds: sanitizedQuestions.map((q) => q.id) },
       attemptNumber: 1,
       startedAt,
       expiresAt,
@@ -511,18 +535,35 @@ export async function submitMyQualifyingExam(req, res) {
     return sendError(res, 'Master exam questions could not be loaded.', 500);
   }
 
+  const totalQuestions = exam.questions.length;
+  if ((answers || []).length > totalQuestions) {
+    return sendError(res, `Submitted answers count (${(answers || []).length}) exceeds total question count (${totalQuestions}).`, 400);
+  }
+
+  const servedIds = attempt.answers?.servedQuestionIds;
+  if (Array.isArray(servedIds) && servedIds.length > 0) {
+    const servedSet = new Set(servedIds);
+    for (const ans of (answers || [])) {
+      if (!servedSet.has(ans.questionId)) {
+        return sendError(res, 'Submitted answer contains a question ID not in the served question set.', 400);
+      }
+    }
+  }
+
   const questionMap = new Map(exam.questions.map((q) => [q.id, q]));
   let correct = 0;
   for (const ans of (answers || [])) {
     const q = questionMap.get(ans.questionId);
-    if (q) {
-      const correctIndex = q.answer?.correctIndex;
-      if (correctIndex !== undefined && Number(ans.optionIndex) === Number(correctIndex)) {
-        correct += 1;
-      }
+    if (!q) {
+      return sendError(res, 'Submitted answer contains a question ID not belonging to this exam.', 400);
+    }
+    const correctIndex = q.answer?.correctIndex;
+    if (correctIndex !== undefined && Number(ans.optionIndex) === Number(correctIndex)) {
+      correct += 1;
     }
   }
-  const score = Math.round((correct / exam.questions.length) * 100);
+  const rawScore = Math.round((correct / totalQuestions) * 100);
+  const score = Math.min(100, Math.max(0, rawScore));
 
   const result = await withAllocationLock(async () => {
     return await prisma.$transaction(async (tx) => {

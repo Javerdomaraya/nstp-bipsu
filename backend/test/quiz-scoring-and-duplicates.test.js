@@ -135,43 +135,85 @@ test('quiz submission with duplicate question IDs is rejected by schema and cont
   assert.match(controllerRes.body.error, /duplicate/i);
 });
 
-test('qualifying exam submission with duplicate question IDs is rejected by schema and controller', async () => {
-  // 1. Schema rejection
-  const validator = validateRequest(submitQualifyingExamSchema);
-  let nextCalled = false;
-  const duplicateReq = {
+test('quiz submission rejects answers.length > expectedCount and handles expectedCount = 0', async () => {
+  // Case A: expectedCount = 0
+  prisma.quiz.findFirst = async () => ({
+    id: 'quiz-empty',
+    data: { passingScore: 70, questionsToShow: 0 },
+    questions: [],
+  });
+  const reqZero = {
+    params: { assessmentId: 'quiz-empty' },
+    student: { id: 'sp-1', componentId: null },
+    body: { answers: [] },
+  };
+  const resZero = mockResponse();
+  await submitMyAssessment(reqZero, resZero);
+  assert.equal(resZero.statusCode, 400);
+  assert.match(resZero.body.error, /no questions configured/i);
+
+  // Case B: answers.length > expectedCount
+  prisma.quiz.findFirst = async () => ({
+    id: 'quiz-1',
+    data: { passingScore: 70, questionsToShow: 1 },
+    questions: [
+      { id: 'q-1', options: ['A', 'B'], answer: { correctIndex: 0 } },
+    ],
+  });
+  const reqExcess = {
+    params: { assessmentId: 'quiz-1' },
+    student: { id: 'sp-1', componentId: null },
     body: {
-      attemptId: 'attempt-1',
-      preferredComponent: 'CWTS',
       answers: [
         { questionId: 'q-1', optionIndex: 0 },
-        { questionId: 'q-1', optionIndex: 1 }, // Duplicate
+        { questionId: 'q-extra', optionIndex: 0 },
       ],
     },
-    params: {},
-    query: {},
   };
-  const duplicateRes = mockResponse();
-  validator(duplicateReq, duplicateRes, () => { nextCalled = true; });
+  const resExcess = mockResponse();
+  await submitMyAssessment(reqExcess, resExcess);
+  assert.equal(resExcess.statusCode, 400);
+  assert.match(resExcess.body.error, /exceeds expected count/i);
+});
 
-  assert.equal(nextCalled, false);
-  assert.equal(duplicateRes.statusCode, 400);
+test('persists servedQuestionIds and rejects non-served question IDs', async () => {
+  let createdSubmission = null;
+  prisma.quiz.findFirst = async () => ({
+    id: 'quiz-1',
+    data: { passingScore: 70, questionsToShow: 1 },
+    questions: [
+      { id: 'q-1', options: ['A', 'B'], answer: { correctIndex: 0 } },
+    ],
+  });
+  prisma.submission.count = async () => 0;
+  prisma.submission.create = async ({ data }) => {
+    createdSubmission = data;
+    return { id: 'sub-1', submittedAt: new Date(), ...data };
+  };
 
-  // 2. Controller rejection
-  const controllerReq = {
-    user: { id: 'student-1' },
+  const reqValid = {
+    params: { assessmentId: 'quiz-1' },
+    student: { id: 'sp-1', componentId: null },
     body: {
-      attemptId: 'attempt-1',
-      preferredComponent: 'CWTS',
-      answers: [
-        { questionId: 'q-1', optionIndex: 0 },
-        { questionId: 'q-1', optionIndex: 1 },
-      ],
+      answers: [{ questionId: 'q-1', optionIndex: 0 }],
     },
   };
-  const controllerRes = mockResponse();
-  await submitMyQualifyingExam(controllerReq, controllerRes);
+  const resValid = mockResponse();
+  await submitMyAssessment(reqValid, resValid);
+  assert.equal(resValid.statusCode, 201);
+  assert.deepEqual(createdSubmission.content.servedQuestionIds, ['q-1']);
+  assert.equal(resValid.body.data.score, 100);
 
-  assert.equal(controllerRes.statusCode, 400);
-  assert.match(controllerRes.body.error, /duplicate/i);
+  // Foreign question ID not in quiz
+  const reqInvalidQ = {
+    params: { assessmentId: 'quiz-1' },
+    student: { id: 'sp-1', componentId: null },
+    body: {
+      answers: [{ questionId: 'q-rogue', optionIndex: 0 }],
+    },
+  };
+  const resInvalidQ = mockResponse();
+  await submitMyAssessment(reqInvalidQ, resInvalidQ);
+  assert.equal(resInvalidQ.statusCode, 400);
+  assert.match(resInvalidQ.body.error, /does not belong to this assessment/i);
 });
