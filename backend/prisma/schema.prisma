@@ -393,6 +393,8 @@ model Enrollment {
   studentId   String
   componentId String
   sectionId   String?
+  schoolYear  String?
+  semester    String?
   status      EnrollmentStatus @default(PENDING)
   enrolledAt  DateTime         @default(now())
   student     StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
@@ -406,6 +408,7 @@ model Enrollment {
   @@index([studentId])
   @@index([componentId])
   @@index([sectionId])
+  @@index([schoolYear, semester])
   @@map("enrollment")
 }
 
@@ -656,6 +659,8 @@ model ComponentApplicationState {
   slotLimits        Json
   qualifyingScore   Int      @default(70)
   applicationClosed Boolean  @default(false)
+  schoolYear        String?
+  semester          String?
   updatedAt         DateTime @default(now())
 
   @@map("component_application_state")

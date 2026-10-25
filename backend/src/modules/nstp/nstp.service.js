@@ -1245,6 +1245,8 @@ export async function placeStudent(tx, {
   userId,
   canonicalComponent,
   sectionId = null,
+  schoolYear,
+  semester,
 }) {
   let student = null;
   if (studentId) {
@@ -1254,6 +1256,15 @@ export async function placeStudent(tx, {
   }
   if (!student) {
     throw new Error(`Student profile not found for placement: ${studentId || userId}`);
+  }
+
+  // Resolve open cycle from ComponentApplicationState if not explicitly provided
+  let cycleSchoolYear = schoolYear;
+  let cycleSemester = semester;
+  if (cycleSchoolYear === undefined || cycleSemester === undefined) {
+    const appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+    if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
+    if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
   }
 
   const component = await tx.nSTPComponent.findFirst({
@@ -1272,15 +1283,40 @@ export async function placeStudent(tx, {
     data: { componentId },
   });
 
+  // Drop other components' enrollments for this student for that term
+  const dropWhere = {
+    studentId: student.id,
+    componentId: { not: componentId },
+    status: { not: 'DROPPED' },
+  };
+  if (cycleSchoolYear) dropWhere.schoolYear = cycleSchoolYear;
+  if (cycleSemester) dropWhere.semester = cycleSemester;
+
+  await tx.enrollment.updateMany({
+    where: dropWhere,
+    data: { status: 'DROPPED' },
+  });
+
+  // Find existing enrollment in target component for this student and cycle
   const existingEnrollment = await tx.enrollment.findFirst({
-    where: { studentId: student.id, componentId, sectionId: sectionId || undefined },
+    where: {
+      studentId: student.id,
+      componentId,
+      ...(cycleSchoolYear ? { schoolYear: cycleSchoolYear } : {}),
+      ...(cycleSemester ? { semester: cycleSemester } : {}),
+    },
   });
 
   let enrollment;
   if (existingEnrollment) {
     enrollment = await tx.enrollment.update({
       where: { id: existingEnrollment.id },
-      data: { status: 'ACTIVE' },
+      data: {
+        status: 'ACTIVE',
+        sectionId: sectionId !== undefined ? sectionId : existingEnrollment.sectionId,
+        schoolYear: cycleSchoolYear,
+        semester: cycleSemester,
+      },
     });
   } else {
     enrollment = await tx.enrollment.create({
@@ -1288,6 +1324,8 @@ export async function placeStudent(tx, {
         studentId: student.id,
         componentId,
         sectionId,
+        schoolYear: cycleSchoolYear,
+        semester: cycleSemester,
         status: 'ACTIVE',
         enrolledAt: new Date(),
       },
@@ -1314,25 +1352,39 @@ export async function countDistinctPlacedStudents(tx, {
   });
   const componentId = component?.id || canonicalComponent;
 
-  // Single authoritative source: StudentProfile.componentId
-  const where = {
-    componentId,
-    ...(currentStudentId ? { id: { not: currentStudentId } } : {}),
-    ...(currentUserId ? { userId: { not: currentUserId } } : {}),
-  };
-
-  // Term-aware enrollment filter when academic term parameters are supplied
-  if (schoolYear || semester) {
-    where.enrollments = {
-      some: {
-        status: 'ACTIVE',
-        section: {
-          ...(schoolYear ? { schoolYear } : {}),
-          ...(semester ? { semester } : {}),
-        },
-      },
-    };
+  // Resolve open cycle from ComponentApplicationState if not explicitly provided
+  let cycleSchoolYear = schoolYear;
+  let cycleSemester = semester;
+  if (cycleSchoolYear === undefined || cycleSemester === undefined) {
+    const appState = await tx.componentApplicationState.findFirst({ where: { id: 'default' } });
+    if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
+    if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
   }
 
-  return await tx.studentProfile.count({ where });
+  const where = {
+    componentId,
+    status: 'ACTIVE',
+  };
+
+  if (cycleSchoolYear) {
+    where.schoolYear = cycleSchoolYear;
+  }
+  if (cycleSemester) {
+    where.semester = cycleSemester;
+  }
+
+  if (currentStudentId) {
+    where.studentId = { not: currentStudentId };
+  } else if (currentUserId) {
+    where.student = { userId: { not: currentUserId } };
+  }
+
+  // Count distinct placed students with ACTIVE enrollments for that cycle
+  const activeEnrollments = await tx.enrollment.findMany({
+    where,
+    distinct: ['studentId'],
+    select: { studentId: true },
+  });
+
+  return activeEnrollments.length;
 }

@@ -621,7 +621,7 @@ export async function submitMyQualifyingExam(req, res) {
 
       let appState = null;
       try {
-        const locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
+        const locked = await tx.$queryRaw`SELECT id, "slotLimits", "qualifyingScore", "applicationClosed", "schoolYear", "semester" FROM component_application_state WHERE id = 'default' FOR UPDATE`;
         if (locked && locked.length) {
           appState = locked[0];
         }
@@ -636,11 +636,13 @@ export async function submitMyQualifyingExam(req, res) {
       const qualifyingScore = appState?.qualifyingScore ?? 70;
       const slotLimit = slotLimits[canonicalPreferred] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonicalPreferred] ?? 0;
 
-      // Count quota strictly by distinct placed students in this component
+      // Count quota strictly from ACTIVE enrollments of that cycle
       const assignedCount = await countDistinctPlacedStudents(tx, {
         canonicalComponent: canonicalPreferred,
         currentStudentId: req.student?.id,
         currentUserId: req.user?.id,
+        schoolYear: appState?.schoolYear,
+        semester: appState?.semester,
       });
 
       const passed = score >= qualifyingScore;
@@ -656,6 +658,8 @@ export async function submitMyQualifyingExam(req, res) {
           studentId: req.student?.id,
           userId: req.user?.id,
           canonicalComponent: canonicalPreferred,
+          schoolYear: appState?.schoolYear,
+          semester: appState?.semester,
         });
       } else {
         status = passed ? 'waitlisted' : 'not-qualified';

@@ -173,13 +173,16 @@ test('real postgres concurrency: two simultaneous submissions for the last slot 
   const attemptId2 = startRes2.body.data.attemptId;
 
   // 7. Fire both submissions simultaneously against real PostgreSQL!
+  const answers1 = startRes1.body.data.questions.map((q) => ({ questionId: q.id, optionIndex: 0 }));
+  const answers2 = startRes2.body.data.questions.map((q) => ({ questionId: q.id, optionIndex: 0 }));
+
   const submitReq1 = {
     user: u1,
     student: u1.studentProfile,
     body: {
       attemptId: attemptId1,
       preferredComponent: compType,
-      answers: [{ questionId: question.id, optionIndex: 0 }], // 100% correct
+      answers: answers1, // 100% correct
     },
   };
   const submitRes1 = mockResponse();
@@ -190,7 +193,7 @@ test('real postgres concurrency: two simultaneous submissions for the last slot 
     body: {
       attemptId: attemptId2,
       preferredComponent: compType,
-      answers: [{ questionId: question.id, optionIndex: 0 }], // 100% correct
+      answers: answers2, // 100% correct
     },
   };
   const submitRes2 = mockResponse();
