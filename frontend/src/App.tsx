@@ -125,7 +125,7 @@ function AuthSplash({ mode, userName }: { mode: 'login' | 'logout' | 'boot'; use
       >
         <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-4">
-            <div className="relative h-16 w-16 overflow-hidden rounded-2xl border border-blue-200 bg-white p-1.5 shadow-sm dark:border-blue-400/30 dark:bg-slate-950">
+            <div className="relative h-16 w-16 overflow-hidden rounded-2xl border border-blue-200/60 p-1.5 shadow-sm dark:border-blue-400/30">
               <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
               <span className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full border-2 border-white bg-[#f2b705] dark:border-slate-900" />
             </div>

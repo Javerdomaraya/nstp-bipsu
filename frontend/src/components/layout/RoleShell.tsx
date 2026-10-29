@@ -54,7 +54,7 @@ export default function RoleShell({
         <aside className="lg:w-80 xl:w-88 shrink-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-950/75 md:p-4">
           <div className="flex items-center justify-between mb-4 gap-3">
             <div className="flex items-center gap-3">
-              <div className="h-12 w-12 overflow-hidden rounded-2xl border border-blue-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <div className="h-12 w-12 overflow-hidden rounded-2xl border border-blue-200/60 p-1 shadow-sm dark:border-slate-700/60">
                 <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
               </div>
               <div>

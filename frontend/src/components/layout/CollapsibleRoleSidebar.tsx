@@ -63,7 +63,7 @@ export default function CollapsibleRoleSidebar({
         <div className="flex h-20 shrink-0 items-center border-b border-white/10 px-4">
           <div className="flex w-full items-center justify-between gap-3 lg:justify-center lg:group-hover/sidebar:justify-start">
             <div className="flex min-w-0 items-center gap-3">
-              <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl border border-[#E5B73B]/40 bg-white p-1 text-sm font-semibold shadow-sm">
+              <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl border border-[#E5B73B]/40 p-1 text-sm font-semibold shadow-sm">
                 <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
               </div>
               <div className={revealTextClass}>

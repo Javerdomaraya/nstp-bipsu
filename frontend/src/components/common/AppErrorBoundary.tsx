@@ -44,7 +44,7 @@ export default class AppErrorBoundary extends Component<Props, State> {
       return (
         <div className="min-h-screen flex items-center justify-center bg-[radial-gradient(circle_at_top,_rgba(11,78,162,0.12)_0%,_rgba(255,210,77,0.14)_22%,_#f8fbff_58%)] p-6 dark:bg-[radial-gradient(circle_at_top,_rgba(90,167,255,0.16)_0%,_rgba(255,210,77,0.08)_18%,_#0b1426_56%)]">
           <div className="max-w-xl w-full rounded-3xl border border-slate-200 bg-white p-8 shadow-xl dark:border-slate-700 dark:bg-slate-950">
-            <div className="mb-4 h-14 w-14 overflow-hidden rounded-2xl border border-blue-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="mb-4 h-14 w-14 overflow-hidden rounded-2xl border border-blue-200/60 p-1 shadow-sm dark:border-slate-700/60">
               <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
             </div>
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Application Error</p>

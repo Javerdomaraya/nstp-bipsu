@@ -706,8 +706,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       <header className="sticky top-0 z-40 border-b border-white/10 bg-[#061f4f] text-white shadow-[0_10px_30px_-20px_rgba(2,6,23,0.8)]">
         <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-2 px-3 py-2.5 sm:gap-4 sm:px-5 sm:py-3 lg:px-12">
           <button onClick={() => showPublicView('home')} className="flex min-w-0 items-center gap-2 text-left sm:gap-3.5">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-sm sm:h-13 sm:w-13 sm:rounded-2xl sm:p-1.5">
-              <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center sm:h-13 sm:w-13">
+              <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain drop-shadow-sm" />
             </span>
             <span className="flex min-w-0 items-center gap-2.5 sm:gap-4">
               <span className="font-brand hidden border-r border-white/40 pr-4 text-2xl font-semibold tracking-tight sm:block sm:text-3xl sm:pr-5">BiPSU</span>
@@ -823,7 +823,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
           <div className="hidden sm:block absolute bottom-0 left-[42%] h-12 w-[38%] rounded-t-[100%] bg-[#0b4ea2] pointer-events-none" />
 
           <div className="relative mx-auto flex min-h-[calc(100svh-4.5rem)] max-w-5xl flex-col items-center justify-center px-4 pb-16 pt-8 text-center sm:px-8 sm:pb-28 sm:pt-12">
-            <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-20 w-20 rounded-full bg-white/90 p-1.5 shadow-[0_18px_48px_-28px_rgba(15,23,42,0.55)] ring-1 ring-blue-100 dark:bg-white dark:ring-blue-300/30 sm:h-28 sm:w-28 sm:p-2" />
+            <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-20 w-20 object-contain drop-shadow-[0_12px_32px_rgba(15,23,42,0.25)] sm:h-28 sm:w-28" />
             <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-[#0b4ea2] dark:text-blue-200 sm:mt-6 sm:text-xs sm:tracking-[0.28em] md:text-sm md:tracking-[0.38em]">
               Biliran Province State University
             </p>
@@ -952,8 +952,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                 <div className="absolute inset-x-0 top-0 h-1 bg-[#f2b705]" />
                 <div className="relative">
                   <div className="mb-6 flex items-center gap-3">
-                    <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-16 w-16 rounded-2xl bg-white p-2" />
-                    <img src={nstpLogo} alt="NSTP logo" className="h-16 w-16 rounded-2xl bg-white p-2" />
+                    <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-16 w-16 object-contain" />
+                    <img src={nstpLogo} alt="NSTP logo" className="h-16 w-16 object-contain" />
                   </div>
                   <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-100">Official BiPSU NSTP Portal</p>
                   <h2 className="mt-2 text-3xl font-semibold">Secure access for enrollment, learning records, and NSTP administration.</h2>
@@ -972,8 +972,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                 <div className="mb-5 flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <div className="mb-2.5 flex items-center gap-2 lg:hidden">
-                      <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
-                      <img src={nstpLogo} alt="NSTP logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
+                      <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-9 w-9 object-contain" />
+                      <img src={nstpLogo} alt="NSTP logo" className="h-9 w-9 object-contain" />
                     </div>
                     <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Portal Access</p>
                     <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100 sm:text-2xl">{mode === 'login' ? 'Sign in to continue' : 'Request student access'}</h2>
@@ -1454,7 +1454,7 @@ function TrustBand() {
         <div className="mx-auto grid max-w-[1540px] gap-8 text-xs sm:grid-cols-2 sm:text-sm lg:grid-cols-4">
           <div>
             <div className="mb-3 flex items-center gap-2.5">
-              <span className="h-9 w-9 rounded-lg bg-white p-1">
+              <span className="h-9 w-9">
                 <img src="/bipsu-logo.png" alt="BiPSU" className="h-full w-full object-contain" />
               </span>
               <div>
