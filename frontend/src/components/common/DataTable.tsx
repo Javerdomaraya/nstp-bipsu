@@ -86,10 +86,51 @@ export default function DataTable<T>({
       )}
 
       {isLoading ? (
-        <div className="flex min-h-[12rem] flex-col items-center justify-center p-8 text-center" role="status">
-          <div className="h-8 w-8 animate-spin rounded-full border-3 border-blue-600 border-t-transparent" />
-          <p className="mt-3 text-sm font-medium text-slate-600 dark:text-slate-300">Loading data…</p>
-        </div>
+        <>
+          {/* Desktop Skeleton Rows */}
+          <div className="hidden md:block overflow-x-auto" role="status" aria-label="Loading data">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50/75 dark:border-slate-800 dark:bg-slate-950/60">
+                <tr>
+                  {columns.map((col) => (
+                    <th key={col.key} className={`px-4 py-3.5 sm:px-6 ${col.width || ''}`}>
+                      <div className="h-3.5 w-24 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                {Array.from({ length: 5 }).map((_, rIdx) => (
+                  <tr key={rIdx}>
+                    {columns.map((col, cIdx) => (
+                      <td key={col.key} className="px-4 py-3.5 sm:px-6">
+                        <div
+                          className={`h-4 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none ${
+                            cIdx === 0 ? 'w-36' : cIdx === 1 ? 'w-24' : 'w-20'
+                          }`}
+                        />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Mobile Skeleton Cards */}
+          <div className="divide-y divide-slate-100 p-3 md:hidden dark:divide-slate-800" role="status" aria-label="Loading data">
+            {Array.from({ length: 3 }).map((_, idx) => (
+              <div key={idx} className="space-y-2.5 p-3">
+                <div className="flex items-center justify-between">
+                  <div className="h-4 w-32 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+                  <div className="h-5 w-16 rounded-full bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+                </div>
+                <div className="h-3 w-48 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+                <div className="h-3 w-28 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+              </div>
+            ))}
+          </div>
+        </>
       ) : data.length === 0 ? (
         <div className="flex min-h-[12rem] flex-col items-center justify-center p-8 text-center">
           <div className="grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-slate-400 dark:bg-slate-800 dark:text-slate-500">

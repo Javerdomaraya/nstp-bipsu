@@ -7,6 +7,7 @@ import { createManagedModule, fetchManagedModules, removeManagedModule, updateMa
 import { fetchManagedAssessments, fetchStudentAssessments } from '../services/assessments';
 import { useCoordinatorScope } from '../hooks/useCoordinatorScope';
 import type { AuthenticatedUser } from '../services/authUser';
+import ListSkeleton from '../components/common/skeletons/ListSkeleton';
 
 export default function ModulesPage({ user, role = 'student', onBack }: { user: AuthenticatedUser; role?: NstpRole; onBack?: () => void }) {
   const [modules, setModules] = useState<NstpModule[]>([]);
@@ -351,10 +352,25 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
   };
 
   if (!selectedModule && !isAdmin) {
+    if (modulesLoading) {
+      return (
+        <div className="bento-screen grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+          <ListSkeleton count={4} />
+          <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+            <div className="space-y-4">
+              <div className="h-6 w-1/2 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+              <div className="h-4 w-full rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+              <div className="h-4 w-3/4 rounded bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+              <div className="h-64 w-full rounded-xl bg-slate-200/80 dark:bg-slate-700/60 animate-pulse motion-reduce:animate-none" />
+            </div>
+          </div>
+        </div>
+      );
+    }
     return (
-      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm">
-        <p className="font-semibold text-slate-900 mb-2">{modulesLoading ? 'Loading modules…' : 'No modules available yet.'}</p>
-        <p className="text-sm text-slate-600">{moduleError || 'Check back after the coordinator publishes the module library.'}</p>
+      <div className="rounded-3xl border border-slate-200 bg-white p-8 text-center shadow-sm dark:border-slate-800 dark:bg-slate-900">
+        <p className="font-semibold text-slate-900 mb-2 dark:text-slate-100">No modules available yet.</p>
+        <p className="text-sm text-slate-600 dark:text-slate-300">{moduleError || 'Check back after the coordinator publishes the module library.'}</p>
       </div>
     );
   }

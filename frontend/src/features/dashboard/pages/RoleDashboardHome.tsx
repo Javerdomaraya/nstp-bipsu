@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '../../../components/common/StatCard';
+import StatCardSkeleton from '../../../components/common/skeletons/StatCardSkeleton';
 import DataTable, { ColumnDef } from '../../../components/common/DataTable';
 import type { NstpModule } from '../../../data/nstpData';
 import { useStudents, useModules, useAssessments, usePendingRegistrations } from '../../../hooks/index';
@@ -92,9 +93,9 @@ const roleCopy = {
 };
 
 export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashboardHomeProps) {
-  const { data: students = [] } = useStudents();
-  const { data: modules = [] } = useModules();
-  const { data: assessments = [] } = useAssessments();
+  const { data: students = [], isLoading: studentsLoading } = useStudents();
+  const { data: modules = [], isLoading: modulesLoading } = useModules();
+  const { data: assessments = [], isLoading: assessmentsLoading } = useAssessments();
   const [grades, setGrades] = useState<SemesterGrade[]>([]);
   const { data: pending = [] } = usePendingRegistrations();
   const copy = roleCopy[role] || roleCopy.student;
@@ -445,27 +446,33 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
         )}
 
         <section className={`grid gap-3 sm:grid-cols-2 ${role === 'admin' ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
-          {kpis.map((card) => {
-            const tone =
-              card.title === 'NSTP Grade'
-                ? 'success'
-                : card.title === 'Component'
-                ? 'warning'
-                : card.title === 'Assessments'
-                ? 'primary'
-                : 'default';
-            return (
-              <StatCard
-                key={card.title}
-                title={card.title}
-                value={card.value}
-                detail={card.detail}
-                icon={card.icon}
-                tone={tone}
-                onClick={card.target ? () => onNavigate?.(card.target!) : undefined}
-              />
-            );
-          })}
+          {(studentsLoading || modulesLoading || assessmentsLoading) && students.length === 0 && modules.length === 0 ? (
+            Array.from({ length: role === 'admin' ? 5 : 4 }).map((_, i) => (
+              <StatCardSkeleton key={i} />
+            ))
+          ) : (
+            kpis.map((card) => {
+              const tone =
+                card.title === 'NSTP Grade'
+                  ? 'success'
+                  : card.title === 'Component'
+                  ? 'warning'
+                  : card.title === 'Assessments'
+                  ? 'primary'
+                  : 'default';
+              return (
+                <StatCard
+                  key={card.title}
+                  title={card.title}
+                  value={card.value}
+                  detail={card.detail}
+                  icon={card.icon}
+                  tone={tone}
+                  onClick={card.target ? () => onNavigate?.(card.target!) : undefined}
+                />
+              );
+            })
+          )}
         </section>
 
         <section className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
@@ -625,6 +632,7 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
               data={modules.slice(0, 5)}
               columns={studentModuleColumns}
               keyExtractor={(mod) => mod.id}
+              isLoading={modulesLoading && modules.length === 0}
               actionSlot={
                 <button
                   onClick={() => onNavigate?.('modules')}

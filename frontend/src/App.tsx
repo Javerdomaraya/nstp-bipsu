@@ -28,6 +28,7 @@ import { connectSocket, disconnectSocket } from './services/socketClient';
 import { fetchCurrentUser, logoutCurrentUser } from './services/api';
 import { normalizeAuthenticatedUser, type AuthenticatedUser, type StudentUser } from './services/authUser';
 import { toast, Toaster } from 'sonner';
+import AppShellSkeleton from './components/common/skeletons/AppShellSkeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/dialog';
 import SectionErrorBoundary from './components/common/SectionErrorBoundary';
 
@@ -49,12 +50,6 @@ type AccountActivity = {
   title: string;
   detail: string;
   createdAt: string;
-};
-
-type AuthSplashState = {
-  visible: boolean;
-  mode: 'login' | 'logout';
-  userName?: string;
 };
 
 const SENSITIVE_STORAGE_KEYS = new Set([
@@ -88,78 +83,6 @@ const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
   focusMode: false,
   highContrast: false,
 };
-
-function AuthSplash({ mode, userName }: { mode: 'login' | 'logout' | 'boot'; userName?: string }) {
-  const isLogin = mode === 'login';
-  const isBoot = mode === 'boot';
-  const titleText = isBoot ? 'NSTP for BiPSU' : isLogin ? 'Welcome back' : 'Signing out';
-  const bodyText = isBoot
-    ? 'Loading your dashboard...'
-    : isLogin
-    ? `Signing in${userName ? `, ${userName.split(' ')[0]}` : ''}...`
-    : 'Please wait...';
-  const [progress, setProgress] = useState(10);
-  const progressDurationMs = isBoot ? 1300 : isLogin ? 2100 : 1800;
-  useEffect(() => {
-    const startedAt = performance.now();
-    const progressTicker = window.setInterval(() => {
-      const elapsed = performance.now() - startedAt;
-      const ratio = Math.max(0, Math.min(1, elapsed / progressDurationMs));
-      setProgress(Math.round(10 + ratio * 90));
-    }, 60);
-    return () => window.clearInterval(progressTicker);
-  }, [progressDurationMs]);
-
-  return (
-    <div className="fixed left-0 top-0 z-[9999] h-dvh w-screen flex items-center justify-center overflow-hidden bg-[#082d73]">
-      <div className="absolute inset-0 bg-[linear-gradient(135deg,#06245c_0%,#0b4ea2_52%,#f2b705_100%)]" />
-      <div className="absolute inset-x-0 bottom-0 h-40 bg-[linear-gradient(180deg,transparent,rgba(2,6,23,0.45))]" />
-      <div className="absolute -left-20 top-10 h-64 w-64 rounded-full border border-white/20" />
-      <div className="absolute -right-16 bottom-16 h-72 w-72 rounded-full border border-[#ffd24d]/50" />
-      <div className="absolute left-[8%] top-[18%] h-20 w-20 rotate-45 border border-white/20" />
-      <div className="absolute right-[18%] top-[16%] h-1 w-32 rounded-full bg-[#ffd24d]/70" />
-      <div className="absolute bottom-[18%] left-[18%] h-1 w-40 rounded-full bg-white/35" />
-
-      <div
-        className="relative w-[min(94vw,760px)] rounded-2xl border border-white/35 bg-white/92 p-6 shadow-[0_28px_90px_-34px_rgba(15,23,42,0.9)] transition-transform duration-200 dark:border-slate-600/60 dark:bg-slate-900/90"
-      >
-        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-center gap-4">
-            <div className="relative h-16 w-16 overflow-hidden rounded-2xl border border-blue-200/60 p-1.5 shadow-sm dark:border-blue-400/30">
-              <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-full w-full object-contain" />
-              <span className="absolute -bottom-1 -right-1 h-5 w-5 rounded-full border-2 border-white bg-[#f2b705] dark:border-slate-900" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-700 dark:text-blue-300">Biliran Province State University</p>
-              <h3 className="text-2xl font-bold text-slate-900 dark:text-slate-100">{titleText}</h3>
-              <p className="text-sm font-semibold text-slate-500 dark:text-slate-300">NSTP Portal for Brilliance, Innovation, Progress, Service and Unity</p>
-            </div>
-          </div>
-          <div className="grid grid-cols-3 gap-2 text-center text-xs font-bold text-slate-700 dark:text-slate-200">
-            <span className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-500/30 dark:bg-blue-500/10">CWTS</span>
-            <span className="rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 dark:border-blue-500/30 dark:bg-blue-500/10">LTS</span>
-            <span className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-500/30 dark:bg-amber-500/10">MTS</span>
-          </div>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white/80 p-4 dark:border-slate-700 dark:bg-slate-950/70">
-          <div className="mb-2 flex items-center justify-between gap-2 text-sm text-slate-700 dark:text-slate-200">
-            <span className="inline-flex items-center gap-2 font-semibold">{bodyText}</span>
-            <span>{progress}%</span>
-          </div>
-          <div className="h-2 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-800">
-            <div className="h-full animate-[splashPulse_1.05s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-blue-700 to-cyan-500" style={{ width: `${Math.max(progress, 16)}%` }} />
-          </div>
-        </div>
-        <div className="mt-4 grid gap-2 text-xs text-slate-500 dark:text-slate-400 sm:grid-cols-3">
-          <span>BiPSU blue and gold identity</span>
-          <span>Student ID verification</span>
-          <span>Grades and clearance portal</span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const NAV_ITEMS: Record<string, Array<{ id: ShellSection; label: string; icon: any }>> = {
   student: [
@@ -237,55 +160,12 @@ export default function App() {
   const { data: serverModules = [] } = useModules({ enabled: isStaff });
   const { data: serverAssessments = [] } = useAssessments({ enabled: isStaff });
   const [readNoticeIds, setReadNoticeIds] = useState<string[]>([]);
-  const [authSplash, setAuthSplash] = useState<AuthSplashState>({ visible: false, mode: 'login' });
-  const [isAuthTransitioning, setIsAuthTransitioning] = useState(false);
-  const [isBootSplashVisible, setIsBootSplashVisible] = useState(true);
   const [dataReady, setDataReady] = useState(false);
   const queryClient = useQueryClient();
   const [showLogoutModal, setShowLogoutModal] = useState(false);
-  const authTimerRef = useRef<number | null>(null);
-  const pendingLoginRef = useRef<AuthenticatedUser | null>(null);
-  const authModeRef = useRef<'login' | 'logout'>('login');
   const workspaceMenuRef = useRef<HTMLDivElement | null>(null);
   const profileMenuRef = useRef<HTMLDivElement | null>(null);
   const notificationsRef = useRef<HTMLDivElement | null>(null);
-
-  const clearAuthTimer = () => {
-    if (authTimerRef.current !== null) {
-      window.clearTimeout(authTimerRef.current);
-      authTimerRef.current = null;
-    }
-  };
-
-  useEffect(() => {
-    return () => {
-      clearAuthTimer();
-    };
-  }, []);
-
-  const completeAuthTransition = () => {
-    clearAuthTimer();
-
-    if (authModeRef.current === 'login') {
-      const nextUser = pendingLoginRef.current;
-      if (nextUser) {
-        setUser(nextUser);
-        setSessionUser(nextUser);
-        // Facilitators land on their own workspace; every other role opens on the
-        // overview its shell defines. The four-branch chain this replaced set the
-        // same section three times, which read as though the roles differed.
-        setActiveSection(nextUser.role === 'facilitator' ? 'facilitator' : 'overview');
-      }
-    } else {
-      setUser(null);
-      setSessionUser(null);
-      setActiveSection('overview');
-    }
-
-    pendingLoginRef.current = null;
-    setAuthSplash((state) => ({ ...state, visible: false }));
-    setIsAuthTransitioning(false);
-  };
 
   useEffect(() => {
     let syncInterval: ReturnType<typeof setInterval> | null = null;
@@ -326,9 +206,6 @@ export default function App() {
       setSessionUser(null);
       setActiveSection('overview');
       setDataReady(true);
-      setIsBootSplashVisible(false);
-      setAuthSplash((state) => ({ ...state, visible: false }));
-      setIsAuthTransitioning(false);
     };
     window.addEventListener('auth:expired', handleAuthExpired);
     return () => {
@@ -385,14 +262,6 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', themeMode === 'dark');
   }, []);
-
-  useEffect(() => {
-    if (!dataReady) return;
-    const bootTimer = window.setTimeout(() => {
-      setIsBootSplashVisible(false);
-    }, 1300);
-    return () => window.clearTimeout(bootTimer);
-  }, [dataReady]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', themeMode === 'dark');
@@ -531,8 +400,6 @@ export default function App() {
   };
 
   const handleLogin = (userData: unknown) => {
-    if (isAuthTransitioning) return;
-
     // Normalise here as well: any future caller of onLogin gets the same shape.
     const authenticatedUser = normalizeAuthenticatedUser(stripPassword(userData));
     if (!authenticatedUser) {
@@ -543,24 +410,17 @@ export default function App() {
       return;
     }
 
-    pendingLoginRef.current = authenticatedUser;
-    authModeRef.current = 'login';
-    setIsAuthTransitioning(true);
-    setAuthSplash({ visible: true, mode: 'login', userName: authenticatedUser.name });
-    clearAuthTimer();
-    authTimerRef.current = window.setTimeout(() => {
-      completeAuthTransition();
-    }, 2100);
+    setUser(authenticatedUser);
+    setSessionUser(authenticatedUser);
+    setActiveSection(authenticatedUser.role === 'facilitator' ? 'facilitator' : 'overview');
   };
 
   const handleLogout = () => {
-    if (isAuthTransitioning) return;
     setShowLogoutModal(true);
   };
 
   const confirmLogout = async () => {
     setShowLogoutModal(false);
-    if (isAuthTransitioning) return;
 
     setProfileMenuOpen(false);
     setAccountUtility(null);
@@ -575,13 +435,9 @@ export default function App() {
     cleanupSensitiveStorage();
     navigator.serviceWorker?.controller?.postMessage({ type: 'CLEAR_SENSITIVE_CACHES' });
 
-    authModeRef.current = 'logout';
-    setIsAuthTransitioning(true);
-    setAuthSplash({ visible: true, mode: 'logout', userName: user?.name });
-    clearAuthTimer();
-    authTimerRef.current = window.setTimeout(() => {
-      completeAuthTransition();
-    }, 1800);
+    setUser(null);
+    setSessionUser(null);
+    setActiveSection('overview');
   };
 
   const cancelLogout = () => setShowLogoutModal(false);
@@ -613,14 +469,21 @@ export default function App() {
     </Dialog>
   );
 
+  if (!dataReady) {
+    return (
+      <>
+        <AppShellSkeleton />
+        <Toaster />
+      </>
+    );
+  }
+
   if (!user) {
     return (
       <>
-        <React.Suspense fallback={<div className="min-h-screen p-8 text-center" role="status">Loading sign-in…</div>}>
+        <React.Suspense fallback={<AppShellSkeleton />}>
           <LoginPage onLogin={handleLogin} />
         </React.Suspense>
-        {isBootSplashVisible && <AuthSplash mode="boot" />}
-        {authSplash.visible && <AuthSplash mode={authSplash.mode} userName={authSplash.userName} />}
         <Toaster />
       </>
     );
@@ -1151,8 +1014,6 @@ export default function App() {
       <>
         <AdminDashboard initialView={adminView as any} onNavigateApp={(target) => setActiveSection(target as ShellSection)} onLogout={handleLogout} />
         {showLogoutModal && renderLogoutModal()}
-        {isBootSplashVisible && <AuthSplash mode="boot" userName={user?.name} />}
-        {authSplash.visible && <AuthSplash mode={authSplash.mode} userName={authSplash.userName} />}
       </>
     );
   }
@@ -1162,8 +1023,6 @@ export default function App() {
       <>
         <CoordinatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
         {showLogoutModal && renderLogoutModal()}
-        {isBootSplashVisible && <AuthSplash mode="boot" userName={user?.name} />}
-        {authSplash.visible && <AuthSplash mode={authSplash.mode} userName={authSplash.userName} />}
       </>
     );
   }
@@ -1173,8 +1032,6 @@ export default function App() {
       <>
         <FacilitatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
         {showLogoutModal && renderLogoutModal()}
-        {isBootSplashVisible && <AuthSplash mode="boot" userName={user?.name} />}
-        {authSplash.visible && <AuthSplash mode={authSplash.mode} userName={authSplash.userName} />}
       </>
     );
   }
@@ -1691,8 +1548,6 @@ export default function App() {
         </div>
       )}
       {showLogoutModal && renderLogoutModal()}
-      {isBootSplashVisible && <AuthSplash mode="boot" userName={user?.name} />}
-      {authSplash.visible && <AuthSplash mode={authSplash.mode} userName={authSplash.userName} />}
     </>
   );
 }
