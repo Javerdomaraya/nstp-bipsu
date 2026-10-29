@@ -5,10 +5,17 @@
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "lib": ["DOM", "DOM.Iterable", "ES2022"],
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
+    "noEmit": true
   },
-  "references": [
-    { "path": "./frontend" }
+  "include": [
+    "frontend/src/**/*",
+    "backend/src/**/*",
+    "backend/test/**/*",
+    "backend/scripts/**/*"
   ],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "**/node_modules/*"]
 }
+

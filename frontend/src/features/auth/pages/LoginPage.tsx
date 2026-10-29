@@ -738,7 +738,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
           <div className="flex items-center gap-1.5 sm:gap-2">
             <button
               onClick={() => setThemeMode((mode) => (mode === 'dark' ? 'light' : 'dark'))}
-              className="inline-flex h-9 w-9 sm:h-10 sm:w-10 items-center justify-center rounded-xl border border-blue-300/70 bg-white/5 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/12 sm:w-auto sm:gap-2 sm:px-3.5 sm:py-2.5 sm:text-sm"
+              className="inline-flex h-9 w-9 sm:h-10 items-center justify-center rounded-xl border border-blue-300/70 bg-white/5 text-xs font-semibold uppercase tracking-tight text-white shadow-sm hover:bg-white/12 sm:w-auto sm:gap-2 sm:px-3.5 sm:py-2.5 sm:text-sm"
               aria-label="Toggle landing page theme"
             >
               {themeMode === 'dark' ? <SunMedium className="h-4 w-4" /> : <MoonStar className="h-4 w-4" />}
@@ -1692,7 +1692,7 @@ function OverviewPreviewCarousel({ activeIndex, onSelect, onLogin }: { activeInd
               <Icon className="h-5 w-5 sm:h-7 sm:w-7" />
             </span>
           </div>
-          <p className="mt-4 max-w-full whitespace-normal break-words text-sm leading-6 text-white/88 [overflow-wrap:anywhere]">{activeFeature.preview}</p>
+          <p className="mt-4 max-w-full whitespace-normal text-sm leading-6 text-white/88 [overflow-wrap:anywhere]">{activeFeature.preview}</p>
         </div>
 
         <div className="mt-4 space-y-3 sm:mt-5 sm:space-y-4">
