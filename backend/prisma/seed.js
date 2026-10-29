@@ -1326,7 +1326,7 @@ export async function runSeed() {
         hours: m.hours,
         isPublished: true,
         status: 'PUBLISHED',
-        componentId: componentsMap['CWTS'].id,
+        componentId: null,
       },
       create: {
         id: m.id,
@@ -1336,7 +1336,7 @@ export async function runSeed() {
         hours: m.hours,
         isPublished: true,
         status: 'PUBLISHED',
-        componentId: componentsMap['CWTS'].id,
+        componentId: null,
       },
     });
 

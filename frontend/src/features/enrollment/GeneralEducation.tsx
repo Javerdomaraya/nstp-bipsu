@@ -110,17 +110,17 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
 
   const totalHours = commonModules.reduce((acc, m) => acc + (progress[m.id]?.completed ? m.hours : 0), 0);
   const completedCount = commonModules.filter((m) => progress[m.id]?.completed).length;
-  const canComplete = totalHours >= 25 && completedCount === commonModules.length;
+  const canComplete = commonModules.length > 0 && totalHours >= 25 && completedCount === commonModules.length;
   const averageScore = completedCount > 0
     ? Math.round(commonModules.filter((m) => progress[m.id]?.completed).reduce((acc, m) => acc + (progress[m.id]?.score || 0), 0) / completedCount)
     : 0;
   const hoursPercent = Math.min(100, Math.round((totalHours / 25) * 100));
-  const seminarPercent = Math.min(100, Math.round((completedCount / commonModules.length) * 100));
+  const seminarPercent = commonModules.length > 0 ? Math.min(100, Math.round((completedCount / commonModules.length) * 100)) : 0;
   const nextModule = commonModules.find((m, index) => !progress[m.id]?.completed && (index === 0 || progress[commonModules[index - 1]?.id]?.completed));
   const remainingHours = Math.max(0, 25 - totalHours);
   const stageSteps = [
     { label: 'Orientation', complete: true },
-    { label: 'Seminars', complete: completedCount === commonModules.length },
+    { label: 'Seminars', complete: commonModules.length > 0 && completedCount === commonModules.length },
     { label: 'Assessments', complete: canComplete },
     { label: 'Component', complete: false },
   ];
@@ -550,6 +550,11 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
                       Join available seminar
                     </button>
                   </>
+                ) : commonModules.length === 0 ? (
+                  <>
+                    <p className="mt-2 text-base font-semibold sm:text-lg">Synchronizing curriculum...</p>
+                    <p className="mt-1 text-xs text-blue-50">Please wait while seminars are loaded.</p>
+                  </>
                 ) : (
                   <>
                     <p className="mt-2 text-base font-semibold sm:text-lg">All seminars cleared</p>
@@ -604,9 +609,15 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
           <StatCard
             title="Seminars Completed"
             value={`${completedCount}/${commonModules.length}`}
-            detail={commonModules.length - completedCount > 0 ? `${commonModules.length - completedCount} seminar(s) remaining` : 'All seminars completed'}
+            detail={
+              commonModules.length === 0
+                ? 'Loading seminars...'
+                : commonModules.length - completedCount > 0
+                ? `${commonModules.length - completedCount} seminar(s) remaining`
+                : 'All seminars completed'
+            }
             icon={Video}
-            tone={completedCount === commonModules.length ? 'success' : 'primary'}
+            tone={commonModules.length > 0 && completedCount === commonModules.length ? 'success' : 'primary'}
             badge={`${seminarPercent}%`}
             progress={seminarPercent}
           />
