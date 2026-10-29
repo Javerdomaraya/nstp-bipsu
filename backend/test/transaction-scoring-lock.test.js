@@ -66,10 +66,10 @@ test('submitMyQualifyingExam scores before transaction, passes timeout options, 
         if (query.includes('FOR UPDATE')) {
           forUpdateExecuted = true;
         }
-        return [{ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70 }];
+        return [{ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70, schoolYear: '2025-2026', semester: 'FIRST', applicationClosed: false, isCurrent: true }];
       },
       componentApplicationState: {
-        findFirst: async () => ({ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70 }),
+        findFirst: async () => ({ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70, schoolYear: '2025-2026', semester: 'FIRST', applicationClosed: false, isCurrent: true }),
       },
       studentProfile: {
         findUnique: async () => ({ id: 'sp-1', userId: 'student-lock-1' }),

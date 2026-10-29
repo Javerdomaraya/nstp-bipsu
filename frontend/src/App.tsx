@@ -21,7 +21,8 @@ const StudentAttendanceView = React.lazy(() => import('./features/dashboard/comp
 import CollapsibleRoleSidebar from './components/layout/CollapsibleRoleSidebar';
 import AppShell from './components/layout/AppShell';
 import PageHeader from './components/layout/PageHeader';
-import { safeJsonParse, loadModules, loadAssessments, loadAccounts, saveAccounts, loadQualifyingExamResults, loadStudents, initializeFromApi, syncAllFromApi, syncCollectionFromApi, retryPendingSyncs, setSessionUser, toNstpComponent, clearSessionSnapshots } from './data/nstpData';
+import { safeJsonParse, setSessionUser, toNstpComponent, clearSessionSnapshots } from './data/nstpData';
+import { useAnnouncements, useModules, useAssessments } from './hooks/index';
 import type { NstpAccount } from './data/nstpData';
 import { connectSocket, disconnectSocket } from './services/socketClient';
 import { fetchCurrentUser, logoutCurrentUser } from './services/api';
@@ -76,42 +77,6 @@ function cleanupSensitiveStorage() {
   }
 }
 
-/**
- * The only fields the locally cached `nstp-accounts` row may contribute to a
- * signed-in student session.
- *
- * The previous code spread the whole row over the session (`{ ...user,
- * ...account }`). That row lives in localStorage, which the browser owns, so an
- * edited entry could overwrite `id`, `email` or `role` — repainting a student as
- * an administrator in the shell — and could put back the `password` field
- * `normalizeAuthenticatedUser` deliberately strips. Identity now comes from the
- * API alone; the snapshot may only advance enrolment progress and display
- * details, which is all it is written to carry.
- */
-function toStudentSnapshotFields(account: NstpAccount | undefined): Partial<StudentUser> {
-  if (!account) return {};
-  return {
-    ...(account.name ? { name: account.name } : {}),
-    ...(account.studentId ? { studentId: account.studentId } : {}),
-    ...(account.title ? { title: account.title } : {}),
-    ...(account.municipality ? { municipality: account.municipality } : {}),
-    ...(account.municipalities ? { municipalities: account.municipalities } : {}),
-    ...(account.componentId ? { componentId: account.componentId } : {}),
-    // Component labels from storage are validated rather than trusted, for the
-    // same reason the normaliser validates them: an unrecognised label must read
-    // as "no component", never as a component the roster does not know about.
-    ...(toNstpComponent(account.component) ? { component: toNstpComponent(account.component)! } : {}),
-    ...(toNstpComponent(account.preferredComponent)
-      ? { preferredComponent: toNstpComponent(account.preferredComponent)! }
-      : {}),
-    ...(account.generalEducationComplete === undefined
-      ? {}
-      : { generalEducationComplete: account.generalEducationComplete }),
-    ...(account.examTaken === undefined ? {} : { examTaken: account.examTaken }),
-    ...(typeof account.examScore === 'number' ? { examScore: account.examScore } : {}),
-    ...(account.componentAccessStatus ? { componentAccessStatus: account.componentAccessStatus } : {}),
-  };
-}
 
 const DEFAULT_ACCOUNT_PREFERENCES: AccountPreferences = {
   defaultLanding: 'overview',
@@ -267,7 +232,10 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [headerHint, setHeaderHint] = useState<string | null>(null);
-  const [notices, setNotices] = useState<Array<{ id: string; title: string; message: string; audience: 'all' | 'student' | 'admin' | 'coordinator' | 'facilitator'; priority: 'normal' | 'high'; createdBy: string; createdAt: string }>>([]);
+  const isStaff = user?.role === 'admin' || user?.role === 'coordinator' || user?.role === 'facilitator';
+  const { data: serverNotices = [] } = useAnnouncements();
+  const { data: serverModules = [] } = useModules({ enabled: isStaff });
+  const { data: serverAssessments = [] } = useAssessments({ enabled: isStaff });
   const [readNoticeIds, setReadNoticeIds] = useState<string[]>([]);
   const [authSplash, setAuthSplash] = useState<AuthSplashState>({ visible: false, mode: 'login' });
   const [isAuthTransitioning, setIsAuthTransitioning] = useState(false);
@@ -334,7 +302,6 @@ export default function App() {
           // opening a workspace this client cannot prove they belong to.
           setUser(authenticatedUser);
           setSessionUser(authenticatedUser);
-          if (authenticatedUser) await initializeFromApi();
         }
       } catch {
         // apiClient has already shown the appropriate error; do not strand the
@@ -377,8 +344,8 @@ export default function App() {
       else if (error?.status === 409) toast.error(error.message || 'The change conflicts with current data and was not saved.');
       else toast.error(error?.message || 'Save failed. Your change was not confirmed by the server.');
     };
-    const handleServiceUnavailable = () => toast.error('Service unavailable. Previously loaded data is shown as stale.', {
-      action: { label: 'Retry', onClick: () => { void Promise.all([syncAllFromApi(), retryPendingSyncs()]); } },
+    const handleServiceUnavailable = () => toast.error('Service unavailable. Reconnecting...', {
+      action: { label: 'Retry', onClick: () => { void queryClient.invalidateQueries(); } },
     });
     window.addEventListener('nstp-api-error', handleApiError);
     window.addEventListener('nstp-service-unavailable', handleServiceUnavailable);
@@ -400,31 +367,20 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    const handleSocketSync = async (event: Event) => {
-      const collection = (event as CustomEvent).detail as string;
-      const apiMap: Record<string, string> = {
-        accounts: 'nstp-accounts',
-        modules: 'nstp-module-library',
-        assessments: 'nstp-assessment-library',
-        students: 'nstp-student-roster',
-        grades: 'nstp-grade-records',
-        'pending-registrations': 'nstp-pending-student-registrations',
-        'training-groups': 'nstp-training-groups',
-        'attendance-records': 'nstp-attendance-records',
-        'attendance-sessions': 'nstp-attendance-sessions',
-        'qualifying-results': 'qualifyingExamResults',
-        'component-state': 'nstp-component-application-state',
-        'audit-log': 'nstp-admin-audit-log',
-      };
-      const localKey = apiMap[collection];
-      if (localKey) {
-        await syncCollectionFromApi(localKey);
-        window.dispatchEvent(new CustomEvent(`${localKey}-synced`));
+    const handleSocketSync = (event: Event) => {
+      const collection = (event as CustomEvent<string>).detail;
+      if (collection) {
+        queryClient.invalidateQueries({ queryKey: [collection] });
+      } else {
+        queryClient.invalidateQueries();
+      }
+      if (['students', 'accounts', 'qualifying-results'].includes(collection)) {
+        void refreshStudentAccess();
       }
     };
     window.addEventListener('nstp-socket-sync', handleSocketSync);
     return () => window.removeEventListener('nstp-socket-sync', handleSocketSync);
-  }, []);
+  }, [queryClient]);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', themeMode === 'dark');
@@ -443,88 +399,34 @@ export default function App() {
     localStorage.setItem('nstp-theme', themeMode);
   }, [themeMode]);
 
+  const refreshStudentAccess = async () => {
+    if (!user || user.role !== 'student') return;
+    try {
+      const res = await fetchCurrentUser();
+      if (res?.data) {
+        const freshUser = normalizeAuthenticatedUser(res.data);
+        if (freshUser && freshUser.id === user.id) {
+          setUser(freshUser);
+          setSessionUser(freshUser);
+        }
+      }
+    } catch {
+      // Keep existing session on network error
+    }
+  };
+
   useEffect(() => {
     if (!user || user.role !== 'student') return;
 
-    const refreshStudentAccess = () => {
-      const account = loadAccounts().find((item) => item.id === user.id);
-      const examResult = loadQualifyingExamResults().find((result) => result.userId === user.id);
-      const rosterRecord = loadStudents().find((student) => student.id === user.id || student.email.toLowerCase() === user.email.toLowerCase());
-      const hasExamAccess = Boolean(
-        examResult?.assignedComponent &&
-        examResult.status &&
-        !['waitlisted', 'not-qualified'].includes(examResult.status),
-      );
-      const hasRosterAccess = Boolean(rosterRecord?.component && rosterRecord.status === 'active');
-      const nextUser: AuthenticatedUser = {
-        ...user,
-        // Only enrolment progress is merged from the local snapshot. Spreading the
-        // whole row let a browser-writable store overwrite `id`, `email` and
-        // `role` — see `toStudentSnapshotFields`.
-        ...toStudentSnapshotFields(account),
-        ...(hasExamAccess
-          ? {
-              generalEducationComplete: true,
-              preferredComponent: examResult?.preferredComponent || user.preferredComponent,
-              examTaken: true,
-              examScore: examResult?.score ?? user.examScore,
-              component: examResult?.assignedComponent ?? undefined,
-              componentAccessStatus: examResult?.status,
-            }
-          : {}),
-        ...(!hasExamAccess && hasRosterAccess
-          ? {
-              component: rosterRecord?.component ?? undefined,
-              componentAccessStatus: rosterRecord?.status,
-            }
-          : {}),
-      };
-
-      if (JSON.stringify(nextUser) !== JSON.stringify(user)) {
+    const handleCurrentUserUpdate = (event: Event) => {
+      const nextUser = normalizeAuthenticatedUser((event as CustomEvent).detail);
+      if (nextUser && nextUser.id === user.id && nextUser.role === user.role) {
         setUser(nextUser);
       }
     };
 
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key) return;
-      const watchedKeys: Record<string, string> = {
-        'nstp-accounts': 'nstp-accounts-updated',
-        'nstp-student-roster': 'nstp-students-updated',
-        'nstp-module-library': 'nstp-modules-updated',
-        'nstp-assessment-library': 'nstp-assessments-updated',
-        'nstp-grade-records': 'nstp-grades-updated',
-        'nstp-training-groups': 'nstp-training-groups-updated',
-        'nstp-component-application-state': 'nstp-component-state-updated',
-        'qualifyingExamResults': 'nstp-qualifying-results-updated',
-      };
-      if (event.key in watchedKeys) {
-        window.dispatchEvent(new Event(watchedKeys[event.key]));
-      }
-      if (['qualifyingExamResults', 'nstp-student-roster', 'nstp-accounts', 'nstpUser'].includes(event.key)) {
-        refreshStudentAccess();
-      }
-    };
-    const handleCurrentUserUpdate = (event: Event) => {
-      // The event detail is a locally stored account row, not an API response, so
-      // it goes through the same normaliser as a login payload: credentials are
-      // stripped, the component label is validated, and an unclassifiable role is
-      // rejected. Both the id and the role must still match the live session —
-      // otherwise a broadcast row could swap the signed-in account or promote it.
-      const nextUser = normalizeAuthenticatedUser((event as CustomEvent).detail);
-      if (nextUser && nextUser.id === user.id && nextUser.role === user.role) setUser(nextUser);
-    };
-
-    refreshStudentAccess();
-    window.addEventListener('storage', handleStorage);
-    window.addEventListener('nstp-qualifying-results-updated', refreshStudentAccess);
-    window.addEventListener('nstp-students-updated', refreshStudentAccess);
-    window.addEventListener('nstp-accounts-updated', refreshStudentAccess);
     window.addEventListener('nstp-current-user-updated', handleCurrentUserUpdate);
     return () => {
-      window.removeEventListener('storage', handleStorage);
-      window.removeEventListener('nstp-qualifying-results-updated', refreshStudentAccess);
-      window.removeEventListener('nstp-students-updated', refreshStudentAccess);
-      window.removeEventListener('nstp-accounts-updated', refreshStudentAccess);
       window.removeEventListener('nstp-current-user-updated', handleCurrentUserUpdate);
     };
   }, [user]);
@@ -597,26 +499,21 @@ export default function App() {
 
   useEffect(() => {
     if (!user?.id) {
-      setNotices([]);
       setReadNoticeIds([]);
       return;
     }
 
-    const noticeKey = 'nstp-system-notices';
     const readKey = `nstp-notice-read-${user.id}`;
-    const savedNotices = safeJsonParse<Array<{ id: string; title: string; message: string; audience: 'all' | 'student' | 'admin' | 'coordinator' | 'facilitator'; priority: 'normal' | 'high'; createdBy: string; createdAt: string }>>(localStorage.getItem(noticeKey), []);
     const savedReads = safeJsonParse<string[]>(localStorage.getItem(readKey), []);
-
-    setNotices(savedNotices || []);
     setReadNoticeIds(savedReads || []);
   }, [user?.id]);
 
   const visibleNotifications = useMemo(() => {
     if (!userRole) return [];
-    return [...notices]
+    return [...serverNotices]
       .filter((notice) => notice.audience === 'all' || notice.audience === userRole)
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [notices, userRole]);
+  }, [serverNotices, userRole]);
 
   const unreadNotificationCount = visibleNotifications.filter((notice) => !readNoticeIds.includes(notice.id)).length;
 
@@ -838,8 +735,8 @@ export default function App() {
   // displays — coordinators get their own figures from coordinator-scoped
   // endpoints in CoordinatorDashboard and ReportsCenter.
   const readLibraryStats = () => {
-    const modules = loadModules();
-    const assessments = loadAssessments();
+    const modules = serverModules;
+    const assessments = serverAssessments;
     const moduleCount = modules.length;
     const assessmentCount = assessments.length;
     const commonModuleHours = modules.reduce((total, module) => total + module.hours, 0);
@@ -922,9 +819,6 @@ export default function App() {
     }
 
     const updatedUser = { ...user, name: nextName, email: nextEmail };
-    const updatedAccounts = loadAccounts().map((account) => (
-      account.id === user.id ? { ...account, name: nextName, email: nextEmail } : account
-    ));
     setUser(updatedUser);
     setHeaderHint('Profile details updated for this session.');
     recordAccountActivity('Profile updated', `${nextName} updated account display details.`);

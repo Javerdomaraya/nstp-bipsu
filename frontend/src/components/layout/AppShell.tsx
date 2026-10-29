@@ -72,7 +72,7 @@ export default function AppShell({
   }, [isSidebarOpen]);
 
   return (
-    <div className={`min-h-screen w-full max-w-full overflow-x-hidden bg-[#f4f8fd] text-slate-900 dark:bg-slate-950 dark:text-slate-100 ${className}`}>
+    <div className={`min-h-screen w-full max-w-full overflow-x-hidden bg-[#f4f8fd] text-slate-900 dark:bg-slate-950 dark:text-slate-100 flex flex-col ${className}`}>
       {/* Sidebar with mobile drawer & desktop hover expansion */}
       <CollapsibleRoleSidebar
         open={isSidebarOpen}
@@ -89,9 +89,9 @@ export default function AppShell({
       />
 
       {/* Main Content Area */}
-      <div className="flex min-h-screen min-w-0 w-full max-w-full flex-col transition-all duration-300 ease-in-out lg:ml-[76px]">
+      <div className="flex min-h-screen min-w-0 w-full max-w-full flex-1 flex-col transition-all duration-300 ease-in-out lg:pl-[76px]">
         {header}
-        <main className="min-w-0 w-full max-w-full flex-1 p-3 sm:p-5 lg:p-6 overflow-x-hidden">
+        <main className="min-w-0 w-full max-w-full flex-1 px-4 sm:px-6 lg:px-8 py-4 sm:py-6 overflow-x-hidden">
           {children}
         </main>
       </div>

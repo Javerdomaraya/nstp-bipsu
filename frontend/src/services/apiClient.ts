@@ -35,6 +35,7 @@ async function fetchWithRetry(input: RequestInfo, init: RequestInit = {}, retrie
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const response = await fetchWithTimeout(input, init);
+      if (response.status === 401 || response.status === 403) return response;
       if (!safeToRetry || ![408, 429].includes(response.status) && response.status < 500 || attempt === retries - 1) return response;
     } catch (error) {
       if (!safeToRetry || attempt === retries - 1) {

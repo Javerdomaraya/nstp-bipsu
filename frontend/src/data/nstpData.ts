@@ -12,16 +12,6 @@ import {
   type NstpComponent,
   type CanonicalComponentType,
 } from './nstpComponents';
-import {
-  DEMO_ACCOUNTS_SEED,
-  DEMO_ASSESSMENTS_SEED,
-  DEMO_ATTENDANCE_RECORDS_SEED,
-  DEMO_ATTENDANCE_SESSIONS_SEED,
-  DEMO_GRADES_SEED,
-  DEMO_MODULES_SEED,
-  DEMO_PENDING_REGISTRATIONS_SEED,
-  DEMO_STUDENTS_SEED,
-} from './demoSeedData';
 
 // The component and coordinator-scope vocabularies live in their own
 // dependency-free module so the security-critical parsers can be imported (and
@@ -566,69 +556,151 @@ export async function syncAllFromApi(): Promise<void> {
 }
 export const BILIRAN_MUNICIPALITIES: BiliranMunicipality[] = ['Almeria', 'Biliran', 'Cabucgayan', 'Caibiran', 'Culaba', 'Kawayan', 'Maripipi', 'Naval'];
 
-export const DEPARTMENTS = [
-  'School of Arts and Sciences',
-  'School of Criminal Justice Education',
-  'School of Management and Entrepreneurship',
-  'School of Nursing and Health Sciences',
-  'School of Engineering',
-  'School of Technology and Computer Studies',
-  'School of Teacher Education - Naval Campus',
-  'School of Teacher Education - Biliran Campus',
-  'School of Agri-Fisheries',
-  'School of Agribusiness and Forest Resource Management',
-  'School of Graduate Studies',
-];
-
-export const COURSES = [
-  'BS Information Technology',
-  'BS Computer Science',
-  'BS Civil Engineering',
-  'BS Electrical Engineering',
-  'BS Mechanical Engineering',
-  'BS Computer Engineering',
-  'BS Criminology',
-  'BS Hospitality Management',
-  'BS Business Administration',
-  'BS Business Administration major in Financial Management',
-  'BS Elementary Education',
-  'BS Secondary Education',
-  'BS Nursing',
-  'BS Agriculture',
-  'BA Economics',
-  'BS Information Systems',
-];
-
 export const BIPSU_PROGRAMS = [
   {
-    school: 'School of Arts and Sciences',
-    programs: ['Bachelor of Arts in Communication', 'Bachelor of Science in Biology', 'Bachelor of Science in Economics'],
+    school: 'School of Graduate Studies',
+    shortName: 'SGS',
+    programs: [
+      'Doctor in Management',
+      'Doctor of Education',
+      'Master of Arts in Education',
+      'Master in Public Management',
+    ],
   },
   {
-    school: 'School of Criminal Justice Education',
-    programs: ['Bachelor of Science in Criminology'],
+    school: 'School of Arts and Sciences (SAS)',
+    shortName: 'SAS',
+    programs: [
+      'Bachelor of Arts in Communication',
+      'Bachelor of Arts in Economics',
+    ],
   },
   {
-    school: 'School of Management and Entrepreneurship',
-    programs: ['Bachelor of Science in Business Administration', 'Bachelor of Science in Hospitality Management', 'Bachelor of Science in Tourism Management'],
+    school: 'School of Business Management / Management and Entrepreneurship (SBM)',
+    shortName: 'SBM',
+    programs: [
+      'BS in Business Administration',
+      'Bachelor of Tourism Management',
+      'Bachelor of Hospitality Management',
+    ],
   },
   {
-    school: 'School of Nursing and Health Sciences',
-    programs: ['Bachelor of Science in Nursing', 'Bachelor of Science in Public Health'],
+    school: 'School of Criminal Justice Education (SCJE)',
+    shortName: 'SCJE',
+    programs: [
+      'BS in Criminology',
+    ],
   },
   {
-    school: 'School of Engineering',
-    programs: ['Bachelor of Science in Civil Engineering', 'Bachelor of Science in Computer Engineering', 'Bachelor of Science in Electrical Engineering', 'Bachelor of Science in Mechanical Engineering'],
+    school: 'School of Engineering (SOE)',
+    shortName: 'SOE',
+    programs: [
+      'BS in Civil Engineering',
+      'BS in Mechanical Engineering',
+      'BS in Electrical Engineering',
+      'BS in Computer Engineering',
+    ],
   },
   {
-    school: 'School of Technology and Computer Studies',
-    programs: ['Bachelor of Science in Computer Science', 'Bachelor of Science in Information Systems', 'BS in Industrial Technology'],
+    school: 'School of Nursing and Health Sciences (SNHS)',
+    shortName: 'SNHS',
+    programs: [
+      'Bachelor of Science in Nursing',
+    ],
   },
   {
-    school: 'School of Teacher Education - Naval Campus',
-    programs: ['Bachelor of Early Childhood Education', 'Bachelor of Elementary Education', 'Bachelor of Physical Education', 'Bachelor of Secondary Education', 'Bachelor of Special Needs Education', 'Bachelor of Technology & Livelihood Education'],
+    school: 'School of Teacher Education (STE - Naval & Biliran Campuses)',
+    shortName: 'STE',
+    programs: [
+      'Bachelor of Early Childhood Education (BECEd)',
+      'Bachelor of Elementary Education (BEEd)',
+      'Bachelor of Secondary Education (BSEd)',
+      'Bachelor of Special Needs Education (BSNEd)',
+      'Bachelor of Physical Education (BPEd)',
+      'Bachelor of Technology and Livelihood Education (BTLEd)',
+    ],
+  },
+  {
+    school: 'School of Technology and Computer Studies (STCS)',
+    shortName: 'STCS',
+    programs: [
+      'BS in Computer Science',
+      'BS in Information Systems',
+      'BS in Industrial Technology',
+    ],
   },
 ];
+
+export const BIPSU_SCHOOLS = BIPSU_PROGRAMS.map((item) => item.school);
+
+export const DEPARTMENTS = BIPSU_SCHOOLS;
+
+export const COURSES = Array.from(
+  new Set(BIPSU_PROGRAMS.flatMap((item) => item.programs))
+);
+
+/**
+ * Automatic Track Classification Rules (BiPSU NSTP Architecture):
+ * Rule A — BS in Criminology (School of Criminal Justice Education):
+ *   Automatically locked to MTS (ROTC) with sub-branch choice between MTS Army and MTS Navy.
+ * Rule B — All Teacher Education Degrees (School of Teacher Education):
+ *   Automatically locked to LTS (Literacy Training Service).
+ * Rule C — All Other Schools (SAS, SBM, SOE, SNHS, STCS):
+ *   Open to standard track placement (CWTS, LTS, MTS Army, MTS Navy, CWTS Coast Guard).
+ */
+export function isCriminologyProgram(degreeProgram?: string, school?: string): boolean {
+  const normProg = String(degreeProgram || '').toLowerCase();
+  const normSchool = String(school || '').toLowerCase();
+  return (
+    normProg.includes('criminology') ||
+    normSchool.includes('criminal justice') ||
+    normSchool.includes('scje')
+  );
+}
+
+export function isTeacherEducationProgram(degreeProgram?: string, school?: string): boolean {
+  const normSchool = String(school || '').toLowerCase();
+  if (normSchool.includes('graduate studies') || normSchool.includes('sgs')) {
+    return false;
+  }
+  const normProg = String(degreeProgram || '').toLowerCase();
+  if (normProg.includes('doctor of education') || normProg.includes('master of arts in education')) {
+    return false;
+  }
+  return (
+    normSchool.includes('teacher education') ||
+    normSchool.includes('ste') ||
+    normProg.includes('early childhood') ||
+    normProg.includes('elementary education') ||
+    normProg.includes('secondary education') ||
+    normProg.includes('special needs') ||
+    normProg.includes('physical education') ||
+    normProg.includes('technology and livelihood') ||
+    normProg.includes('education') ||
+    normProg.includes('beced') ||
+    normProg.includes('beed') ||
+    normProg.includes('bsed') ||
+    normProg.includes('bsned') ||
+    normProg.includes('bped') ||
+    normProg.includes('btled')
+  );
+}
+
+export function getAutomaticTrackRouting(degreeProgram?: string, school?: string): 'MTS' | 'LTS' | null {
+  if (isCriminologyProgram(degreeProgram, school)) return 'MTS';
+  if (isTeacherEducationProgram(degreeProgram, school)) return 'LTS';
+  return null;
+}
+
+export function getAllowedComponentsForProgram(degreeProgram?: string, school?: string): NstpComponent[] {
+  if (isCriminologyProgram(degreeProgram, school)) {
+    return ['MTS (Army)', 'MTS (Navy)'];
+  }
+  if (isTeacherEducationProgram(degreeProgram, school)) {
+    return ['LTS'];
+  }
+  return ['CWTS', 'LTS', 'MTS (Army)', 'MTS (Navy)', 'CWTS (Coast Guard)'];
+}
 
 export const YEAR_LEVEL_OPTIONS = ['1st Year', '2nd Year', '3rd Year', '4th Year'];
 export const INDUSTRIAL_TECHNOLOGY_PROGRAM = 'BS in Industrial Technology';
@@ -642,7 +714,7 @@ export const INDUSTRIAL_TECHNOLOGY_MAJORS = [
   'HVAC-R Technology',
 ];
 
-export const SECONDARY_EDUCATION_PROGRAM = 'Bachelor of Secondary Education';
+export const SECONDARY_EDUCATION_PROGRAM = 'Bachelor of Secondary Education (BSEd)';
 export const SECONDARY_EDUCATION_MAJORS = [
   'English',
   'Mathematics',
@@ -650,6 +722,15 @@ export const SECONDARY_EDUCATION_MAJORS = [
   'Social Studies',
   'Filipino',
 ];
+
+export function isProgramWithMajor(program?: string): boolean {
+  if (!program) return false;
+  return (
+    program === INDUSTRIAL_TECHNOLOGY_PROGRAM ||
+    program === SECONDARY_EDUCATION_PROGRAM ||
+    program.startsWith('Bachelor of Secondary Education')
+  );
+}
 
 export type QualifyingExamResult = {
   userId: string;
@@ -666,6 +747,7 @@ export type QualifyingExamResult = {
 };
 
 export type ComponentApplicationState = {
+  id?: string;
   slotLimits: Record<CanonicalComponentType, number>;
   qualifyingScore: number;
   applicationClosed: boolean;
@@ -718,45 +800,12 @@ function sessionRole(): string | null {
  * to any reader: an absent key and a key holding `'[]'` both parse to `[]` via
  * `safeJsonParse(readSensitive(key), [])`.
  */
-export function ensureNstpSeedData(forceSeed = false) {
-  if (typeof window === 'undefined') return;
-
-  const accountsRaw = readSensitive(ACCOUNTS_KEY);
-  if (forceSeed || accountsRaw === null) {
-    writeSensitive(ACCOUNTS_KEY, JSON.stringify(DEMO_ACCOUNTS_SEED));
-  }
-  const assessmentsRaw = readSensitive(ASSESSMENTS_KEY);
-  if (forceSeed || assessmentsRaw === null) {
-    writeSensitive(ASSESSMENTS_KEY, JSON.stringify(DEMO_ASSESSMENTS_SEED));
-  }
-  const modulesRaw = readSensitive(MODULES_KEY);
-  if (forceSeed || modulesRaw === null) {
-    writeSensitive(MODULES_KEY, JSON.stringify(DEMO_MODULES_SEED));
-  }
-  const studentsRaw = readSensitive(STUDENTS_KEY);
-  if (forceSeed || studentsRaw === null) {
-    writeSensitive(STUDENTS_KEY, JSON.stringify(DEMO_STUDENTS_SEED));
-  }
-  const pendingRaw = readSensitive(PENDING_REGISTRATIONS_KEY);
-  if (forceSeed || pendingRaw === null) {
-    writeSensitive(PENDING_REGISTRATIONS_KEY, JSON.stringify(DEMO_PENDING_REGISTRATIONS_SEED));
-  }
-  const gradesRaw = readSensitive(GRADES_KEY);
-  if (forceSeed || gradesRaw === null) {
-    writeSensitive(GRADES_KEY, JSON.stringify(DEMO_GRADES_SEED));
-  }
-  const attSessionsRaw = readSensitive(ATTENDANCE_SESSIONS_KEY);
-  if (forceSeed || attSessionsRaw === null) {
-    writeSensitive(ATTENDANCE_SESSIONS_KEY, JSON.stringify(DEMO_ATTENDANCE_SESSIONS_SEED));
-  }
-  const attRecordsRaw = readSensitive(ATTENDANCE_RECORDS_KEY);
-  if (forceSeed || attRecordsRaw === null) {
-    writeSensitive(ATTENDANCE_RECORDS_KEY, JSON.stringify(DEMO_ATTENDANCE_RECORDS_SEED));
-  }
+export function ensureNstpSeedData(_forceSeed = false) {
+  // Collections initialize empty and are populated strictly by the authoritative API.
 }
 
 export function resetDemoSeedData() {
-  ensureNstpSeedData(true);
+  clearSessionSnapshots();
 }
 
 export async function initializeFromApi() {

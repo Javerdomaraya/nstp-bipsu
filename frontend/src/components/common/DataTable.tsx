@@ -68,10 +68,10 @@ export default function DataTable<T>({
   return (
     <div className={`w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}>
       {(title || subtitle || actionSlot) && (
-        <div className="flex flex-col gap-2 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 dark:border-slate-800">
-          <div>
+        <div className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4 sm:p-5 dark:border-slate-800">
+          <div className="min-w-0 flex-1">
             {title && (
-              <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100 sm:text-lg">
+              <h3 className="truncate text-base font-semibold text-slate-900 dark:text-slate-100 sm:text-lg">
                 {title}
               </h3>
             )}
@@ -81,7 +81,7 @@ export default function DataTable<T>({
               </p>
             )}
           </div>
-          {actionSlot && <div className="flex items-center gap-2">{actionSlot}</div>}
+          {actionSlot && <div className="flex shrink-0 flex-wrap items-center gap-2">{actionSlot}</div>}
         </div>
       )}
 

@@ -34,23 +34,10 @@ export default function PendingAssignment({ user, onAssign, onLogout }: Props) {
             return;
           }
         }
-      } catch {
-        // Fallback to local storage if API is unreachable
-      }
-
-      const allResults = JSON.parse(localStorage.getItem('qualifyingExamResults') || '[]');
-      const userResult = allResults.find((r: any) => r.userId === user.id);
-      const assignedComponent = toNstpComponent(userResult?.assignedComponent);
-
-      if (assignedComponent && mounted) {
-        onAssign(assignedComponent);
+      } catch (err) {
+        console.warn('Unable to check qualifying results from server:', err);
       }
     };
-
-    const result = localStorage.getItem(`examResult-${user.id}`);
-    if (result) {
-      setExamResult(JSON.parse(result));
-    }
 
     checkAssignment();
     const interval = setInterval(checkAssignment, 2000);

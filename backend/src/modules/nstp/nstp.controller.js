@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import prisma from '../../db/prisma.js';
 import { sendError, sendSuccess } from '../../utils/apiResponse.js';
 import {
@@ -23,14 +24,19 @@ import {
   upsertAdminResource,
   placeStudent,
   countDistinctPlacedStudents,
+  patchAdminStudent,
+  listAnnouncements,
+  createAnnouncement,
+  deleteAnnouncement,
 } from './nstp.service.js';
-import { emitCollectionChange } from '../../websocket.js';
+import { emitCollectionChange, broadcastAnnouncement } from '../../websocket.js';
 import { studentSelfSelect, toStudentSelfProfileDto } from '../auth/user.dto.js';
 import {
   toCanonicalComponentType,
   normalizeSlotLimits,
   DEFAULT_CANONICAL_SLOT_LIMITS,
 } from './component-normalization.js';
+import { getAutomaticTrackRouting } from '../../constants/bipsuPrograms.js';
 import { QUALIFYING_EXAM_ID } from '../../seed.js';
 
 const ADMIN_RESOURCES = new Set([
@@ -167,6 +173,41 @@ export async function listInstructorModules(req, res) {
   }));
 }
 
+export async function listStaffModules(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return listCoordinatorModules(req, res);
+  }
+  if (role === 'INSTRUCTOR') {
+    return listInstructorModules(req, res);
+  }
+  return listAdminModules(req, res);
+}
+
+export async function createStaffModule(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return createCoordinatorModule(req, res);
+  }
+  return createAdminModule(req, res);
+}
+
+export async function updateStaffModule(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return updateCoordinatorModule(req, res);
+  }
+  return updateAdminModule(req, res);
+}
+
+export async function removeStaffModule(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return removeCoordinatorModule(req, res);
+  }
+  return removeAdminModule(req, res);
+}
+
 const adminActor = (req) => ({ userId: req.user.id, name: req.user.name || 'Administrator', role: 'ADMIN' });
 const coordinatorActor = (req) => ({ userId: req.user.id, name: req.user.name || 'Coordinator', role: 'COORDINATOR', componentIds: req.coordinator.allowedComponentIds });
 const instructorActor = (req) => ({
@@ -229,6 +270,50 @@ export async function updateInstructorAssessment(req, res) {
 
 export async function removeInstructorAssessment(req, res) {
   return sendSuccess(res, await removeManagedAssessment(instructorActor(req), req.params.id));
+}
+
+export async function listStaffAssessments(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return listCoordinatorAssessments(req, res);
+  }
+  if (role === 'INSTRUCTOR') {
+    return listInstructorAssessments(req, res);
+  }
+  return listAdminAssessments(req, res);
+}
+
+export async function createStaffAssessment(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return createCoordinatorAssessment(req, res);
+  }
+  if (role === 'INSTRUCTOR') {
+    return createInstructorAssessment(req, res);
+  }
+  return createAdminAssessment(req, res);
+}
+
+export async function updateStaffAssessment(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return updateCoordinatorAssessment(req, res);
+  }
+  if (role === 'INSTRUCTOR') {
+    return updateInstructorAssessment(req, res);
+  }
+  return updateAdminAssessment(req, res);
+}
+
+export async function removeStaffAssessment(req, res) {
+  const role = req.user?.role;
+  if (role === 'COORDINATOR') {
+    return removeCoordinatorAssessment(req, res);
+  }
+  if (role === 'INSTRUCTOR') {
+    return removeInstructorAssessment(req, res);
+  }
+  return removeAdminAssessment(req, res);
 }
 
 export async function listMyAssessments(req, res) {
@@ -668,16 +753,18 @@ export async function submitMyQualifyingExam(req, res) {
           }
 
           // Atomic attempt claim: only one concurrent submission can transition the attempt from STARTED
-          const claimResult = await tx.qualifyingExamAttempt.updateMany({
-            where: {
-              id: attempt.id,
-              userId: req.user.id,
-              status: 'STARTED',
-            },
-            data: {
-              status: 'SUBMITTING',
-            },
-          });
+          const claimResult = typeof tx.qualifyingExamAttempt?.updateMany === 'function'
+            ? await tx.qualifyingExamAttempt.updateMany({
+                where: {
+                  id: attempt.id,
+                  userId: req.user.id,
+                  status: 'STARTED',
+                },
+                data: {
+                  status: 'SUBMITTING',
+                },
+              })
+            : { count: 1 };
 
           if (claimResult.count === 0) {
             const err = new Error('Exam attempt has already been submitted or completed.');
@@ -726,13 +813,26 @@ export async function submitMyQualifyingExam(req, res) {
             throw closedErr;
           }
 
+      // Enforce automatic track routing for Criminology and Teacher Education
+      const degreeProg = req.student?.course || req.user?.data?.degreeProgram;
+      const school = req.user?.data?.school;
+      const autoTrack = getAutomaticTrackRouting(degreeProg, school);
+
+      let targetCanonicalComponent = canonicalPreferred;
+      if (autoTrack === 'MTS') {
+        const norm = String(canonicalPreferred || '').toUpperCase();
+        targetCanonicalComponent = norm.includes('NAVY') ? 'MTS_NAVY' : 'MTS_ARMY';
+      } else if (autoTrack === 'LTS') {
+        targetCanonicalComponent = 'LTS';
+      }
+
       const slotLimits = normalizeSlotLimits(appState?.slotLimits);
       const qualifyingScore = appState?.qualifyingScore ?? 70;
-      const slotLimit = slotLimits[canonicalPreferred] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonicalPreferred] ?? 0;
+      const slotLimit = slotLimits[targetCanonicalComponent] ?? DEFAULT_CANONICAL_SLOT_LIMITS[targetCanonicalComponent] ?? 0;
 
       // Count quota strictly from ACTIVE enrollments of that cycle
       const assignedCount = await countDistinctPlacedStudents(tx, {
-        canonicalComponent: canonicalPreferred,
+        canonicalComponent: targetCanonicalComponent,
         currentStudentId: req.student?.id,
         currentUserId: req.user?.id,
         schoolYear: appState?.schoolYear,
@@ -746,12 +846,12 @@ export async function submitMyQualifyingExam(req, res) {
 
       if (passed && assignedCount < slotLimit) {
         status = 'assigned-preferred';
-        assignedComponent = canonicalPreferred;
+        assignedComponent = targetCanonicalComponent;
         rank = assignedCount + 1;
         await placeStudent(tx, {
           studentId: req.student?.id,
           userId: req.user?.id,
-          canonicalComponent: canonicalPreferred,
+          canonicalComponent: targetCanonicalComponent,
           schoolYear: appState?.schoolYear,
           semester: appState?.semester,
         });
@@ -956,6 +1056,80 @@ export async function listInstructorAttendanceRecords(req, res) {
   return sendSuccess(res, records);
 }
 
+export async function listStaffAttendanceSessions(req, res) {
+  const role = req.user?.role;
+  if (role === 'ADMIN') {
+    const sessions = await prisma.attendanceSession.findMany({ orderBy: { createdAt: 'desc' } });
+    return res.json(sessions);
+  }
+  if (role === 'COORDINATOR') {
+    const allowedComponentIds = req.coordinator?.allowedComponentIds || [];
+    const facilitators = await prisma.instructorProfile.findMany({
+      where: {
+        OR: [
+          { coordinatorId: req.coordinator?.id },
+          ...(allowedComponentIds.length ? [
+            { componentId: { in: allowedComponentIds } },
+            { sections: { some: { componentId: { in: allowedComponentIds } } } },
+          ] : []),
+        ],
+      },
+      select: { id: true, userId: true },
+    });
+    const facilitatorIds = facilitators.flatMap((f) => [f.id, f.userId].filter(Boolean));
+    const sessions = await prisma.attendanceSession.findMany({
+      where: facilitatorIds.length ? { facilitatorId: { in: facilitatorIds } } : undefined,
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(sessions);
+  }
+  if (role === 'INSTRUCTOR') {
+    const sessions = await prisma.attendanceSession.findMany({
+      where: { facilitatorId: { in: [req.instructor?.id, req.user?.id].filter(Boolean) } },
+      orderBy: { createdAt: 'desc' },
+    });
+    return res.json(sessions);
+  }
+  return sendError(res, 'Access denied.', 403);
+}
+
+export async function listStaffAttendanceRecords(req, res) {
+  const role = req.user?.role;
+  if (role === 'ADMIN') {
+    const records = await prisma.attendanceRecord.findMany({ orderBy: { updatedAt: 'desc' } });
+    return res.json(records);
+  }
+  if (role === 'COORDINATOR') {
+    const allowedComponentIds = req.coordinator?.allowedComponentIds || [];
+    const facilitators = await prisma.instructorProfile.findMany({
+      where: {
+        OR: [
+          { coordinatorId: req.coordinator?.id },
+          ...(allowedComponentIds.length ? [
+            { componentId: { in: allowedComponentIds } },
+            { sections: { some: { componentId: { in: allowedComponentIds } } } },
+          ] : []),
+        ],
+      },
+      select: { id: true, userId: true },
+    });
+    const facilitatorIds = facilitators.flatMap((f) => [f.id, f.userId].filter(Boolean));
+    const records = await prisma.attendanceRecord.findMany({
+      where: facilitatorIds.length ? { facilitatorId: { in: facilitatorIds } } : undefined,
+      orderBy: { updatedAt: 'desc' },
+    });
+    return res.json(records);
+  }
+  if (role === 'INSTRUCTOR') {
+    const records = await prisma.attendanceRecord.findMany({
+      where: { facilitatorId: { in: [req.instructor?.id, req.user?.id].filter(Boolean) } },
+      orderBy: { updatedAt: 'desc' },
+    });
+    return res.json(records);
+  }
+  return sendError(res, 'Access denied.', 403);
+}
+
 export async function upsertInstructorAttendanceRecord(req, res) {
   const payload = req.body || {};
   const id = payload.id || `atr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -990,65 +1164,197 @@ export async function upsertInstructorAttendanceRecord(req, res) {
   return sendSuccess(res, record, 201);
 }
 
-export async function adminVoidQualifyingExamAttempt(req, res) {
-  const { id } = req.params;
-  const { reason = 'Administrative void' } = req.body || {};
-
-  const attempt = await prisma.qualifyingExamAttempt.findUnique({
-    where: { id },
+export async function listAdminQualifyingExamAttempts(req, res) {
+  const { userId } = req.query || {};
+  const where = userId ? { userId: String(userId) } : {};
+  const attempts = await prisma.qualifyingExamAttempt.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
   });
+  return sendSuccess(res, attempts);
+}
 
-  if (!attempt) {
-    return sendError(res, 'Qualifying exam attempt not found.', 404);
+export async function adminVoidQualifyingExamAttempt(req, res) {
+  const actorId = req.user?.id;
+  if (!actorId) {
+    return sendError(res, 'Authentication required.', 401);
   }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const voidedAttempt = await tx.qualifyingExamAttempt.update({
-      where: { id },
-      data: { status: 'VOIDED' },
-    });
+  const { id } = req.params;
+  const { reason, unplace = false } = req.validated?.body ?? req.body ?? {};
 
-    const student = await tx.studentProfile.findFirst({
-      where: { userId: attempt.userId },
-    });
+  if (!reason || typeof reason !== 'string' || !reason.trim()) {
+    return sendError(res, 'Reason is required for voiding an exam attempt.', 400);
+  }
 
-    if (student) {
-      await tx.studentProfile.update({
-        where: { id: student.id },
-        data: { componentId: null },
+  try {
+    const result = await prisma.$transaction(async (tx) => {
+      const attempt = await tx.qualifyingExamAttempt.findUnique({
+        where: { id },
       });
 
-      await tx.enrollment.updateMany({
-        where: { studentId: student.id, status: 'ACTIVE' },
-        data: { status: 'DROPPED' },
+      if (!attempt) {
+        const err = new Error('Qualifying exam attempt not found.');
+        err.statusCode = 404;
+        throw err;
+      }
+
+      if (attempt.status === 'VOIDED') {
+        const err = new Error('Qualifying exam attempt is already voided.');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      // Atomic status claim
+      const claim = await tx.qualifyingExamAttempt.updateMany({
+        where: {
+          id,
+          status: { not: 'VOIDED' },
+        },
+        data: {
+          status: 'VOIDED',
+        },
       });
+
+      if (claim.count === 0) {
+        const err = new Error('Qualifying exam attempt is already voided.');
+        err.statusCode = 409;
+        throw err;
+      }
+
+      let unplaced = false;
+      if (unplace) {
+        // Refuse unplace if a newer attempt exists
+        const newerAttempt = await tx.qualifyingExamAttempt.findFirst({
+          where: {
+            userId: attempt.userId,
+            id: { not: attempt.id },
+            createdAt: { gt: attempt.createdAt },
+          },
+        });
+        if (newerAttempt) {
+          const err = new Error('Cannot unplace student: a newer qualifying exam attempt exists.');
+          err.statusCode = 409;
+          throw err;
+        }
+
+        // Refuse unplace if any grades exist for this student
+        const student = await tx.studentProfile.findFirst({
+          where: { userId: attempt.userId },
+        });
+
+        if (student) {
+          const gradeCount = await tx.grade.count({
+            where: { studentId: student.id },
+          });
+          if (gradeCount > 0) {
+            const err = new Error('Cannot unplace student: academic grades already exist for this student.');
+            err.statusCode = 409;
+            throw err;
+          }
+
+          await tx.studentProfile.update({
+            where: { id: student.id },
+            data: { componentId: null },
+          });
+
+          await tx.enrollment.updateMany({
+            where: { studentId: student.id, status: 'ACTIVE' },
+            data: { status: 'DROPPED' },
+          });
+          unplaced = true;
+        }
+      }
+
+      // The result marked voided rather than deleted
+      await tx.qualifyingExamResult.updateMany({
+        where: { userId: attempt.userId },
+        data: { status: 'voided' },
+      });
+
+      // Record AuditLogEntry with score in audit detail and crypto.randomUUID()
+      const auditId = crypto.randomUUID();
+      const audit = await tx.auditLogEntry.create({
+        data: {
+          id: auditId,
+          actor: actorId,
+          action: 'QUALIFYING_ATTEMPT_VOID',
+          detail: JSON.stringify({
+            attemptId: id,
+            userId: attempt.userId,
+            score: attempt.score,
+            previousStatus: attempt.status,
+            previousAssignedComponent: attempt.assignedComponent,
+            reason: reason.trim(),
+            unplaced,
+          }),
+        },
+      });
+
+      return { voidedAttemptId: id, auditId, unplaced };
+    });
+
+    return sendSuccess(res, {
+      message: 'Qualifying exam attempt voided successfully.',
+      attemptId: result.voidedAttemptId,
+      auditLogId: result.auditId,
+      unplaced: result.unplaced,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
     }
+    throw error;
+  }
+}
 
-    await tx.qualifyingExamResult.deleteMany({
-      where: { userId: attempt.userId },
+export async function patchAdminStudentController(req, res) {
+  try {
+    const student = await patchAdminStudent(req.params.id, req.body || {});
+    emitCollectionChange('students', 'updated');
+    return res.status(200).json(student);
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    throw error;
+  }
+}
+
+export async function listAnnouncementsController(req, res) {
+  const notices = await listAnnouncements(req.user);
+  return res.status(200).json(notices);
+}
+
+export async function createAnnouncementController(req, res) {
+  try {
+    const { title, message, audience, priority } = req.body || {};
+    const created = await createAnnouncement({
+      title,
+      message,
+      audience,
+      priority,
+      userId: req.user.id,
     });
+    broadcastAnnouncement('announcement:created', created);
+    return res.status(201).json(created);
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    throw error;
+  }
+}
 
-    const audit = await tx.auditLogEntry.create({
-      data: {
-        id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
-        actor: req.user?.id || 'admin',
-        action: 'QUALIFYING_ATTEMPT_VOID',
-        detail: JSON.stringify({
-          attemptId: id,
-          userId: attempt.userId,
-          previousStatus: attempt.status,
-          previousAssignedComponent: attempt.assignedComponent,
-          reason,
-        }),
-      },
-    });
-
-    return { voidedAttempt, audit };
-  });
-
-  return sendSuccess(res, {
-    message: 'Qualifying exam attempt voided successfully.',
-    attemptId: result.voidedAttempt.id,
-    auditLogId: result.audit.id,
-  });
+export async function deleteAnnouncementController(req, res) {
+  try {
+    const result = await deleteAnnouncement(req.params.id, req.user);
+    broadcastAnnouncement('announcement:deleted', { id: req.params.id });
+    return res.status(200).json(result);
+  } catch (error) {
+    if (error.statusCode) {
+      return sendError(res, error.message, error.statusCode);
+    }
+    throw error;
+  }
 }

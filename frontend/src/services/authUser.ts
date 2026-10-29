@@ -135,6 +135,10 @@ export type FacilitatorUser = SessionIdentity & ComponentMembership & { role: 'f
 export type StudentUser = SessionIdentity & ComponentMembership & {
   role: 'student';
   studentId?: string;
+  course?: string;
+  degreeProgram?: string;
+  school?: string;
+  department?: string;
   /**
    * Enrolment state, declared on this variant alone. The shell gates the
    * General Education → component preference → qualifying exam → pending
@@ -329,6 +333,19 @@ export function normalizeAuthenticatedUser(raw: unknown): AuthenticatedUser | nu
       const studentId = asText(rest.studentId)
         ?? asText(studentProfile.studentNumber)
         ?? asText(profileData.studentId);
+      const course = asText(rest.course)
+        ?? asText(studentProfile.course)
+        ?? asText(profileData.course)
+        ?? asText(profileData.degreeProgram);
+      const degreeProgram = asText(rest.degreeProgram)
+        ?? asText(profileData.degreeProgram)
+        ?? asText(studentProfile.course)
+        ?? course;
+      const school = asText(rest.school)
+        ?? asText(profileData.school)
+        ?? asText(profileData.department)
+        ?? asText(studentProfile.department);
+      const department = school ?? asText(rest.department);
       const preferredComponent = toNstpComponent(rest.preferredComponent)
         ?? toNstpComponent(profileData.preferredComponent);
       const generalEducationComplete = asFlag(rest.generalEducationComplete ?? profileData.generalEducationComplete);
@@ -340,6 +357,10 @@ export function normalizeAuthenticatedUser(raw: unknown): AuthenticatedUser | nu
         ...identity,
         role,
         ...(studentId ? { studentId } : {}),
+        ...(course ? { course } : {}),
+        ...(degreeProgram ? { degreeProgram } : {}),
+        ...(school ? { school } : {}),
+        ...(department ? { department } : {}),
         ...(preferredComponent ? { preferredComponent } : {}),
         ...(generalEducationComplete === undefined ? {} : { generalEducationComplete }),
         ...(examTaken === undefined ? {} : { examTaken }),

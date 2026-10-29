@@ -1,25 +1,31 @@
 import { useState, useEffect } from 'react';
-import { Users, TrendingUp, Award, Settings, CheckCircle, AlertCircle, ArrowRight, RefreshCw, Pencil } from 'lucide-react';
+import { Users, TrendingUp, Award, Settings, CheckCircle, AlertCircle, ArrowRight, RefreshCw, Pencil, AlertTriangle, Ban, X, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { fetchAdminQualifyingAttempts, voidAdminQualifyingExamAttempt, batchUpsert } from '../../../services/api';
+import { useQualifyingResults, useUpsertQualifyingResult, useComponentState, useUpsertComponentState, useStudents } from '../../../hooks/index';
 import {
-  COMPONENT_APPLICATION_STATE_KEY,
   DEFAULT_COMPONENT_APPLICATION_STATE,
   NSTP_COMPONENTS,
   CANONICAL_COMPONENTS,
   COMPONENT_DISPLAY_NAMES,
-  loadComponentApplicationState,
-  loadQualifyingExamResults,
-  saveComponentApplicationState,
-  saveQualifyingExamResults,
-  syncStudentAccessFromQualifyingResults,
   toCanonicalComponentType,
   CanonicalComponentType,
   NstpComponent,
   QualifyingExamResult,
+  isCriminologyProgram,
+  isTeacherEducationProgram,
+  getAllowedComponentsForProgram,
 } from '../../../data/nstpData';
 
 const COMPONENTS = NSTP_COMPONENTS;
 
 export default function ComponentAssignment() {
+  const { data: serverResults = [], refetch: refetchResults } = useQualifyingResults();
+  const { data: serverStateList = [], refetch: refetchState } = useComponentState();
+  const { data: students = [] } = useStudents();
+  const upsertComponentStateMutation = useUpsertComponentState();
+  const upsertQualifyingResultMutation = useUpsertQualifyingResult();
+
   const [examResults, setExamResults] = useState<any[]>([]);
   const [slotLimits, setSlotLimits] = useState<Record<CanonicalComponentType, number>>(DEFAULT_COMPONENT_APPLICATION_STATE.slotLimits);
   const [assignments, setAssignments] = useState<Record<string, any>>({});
@@ -31,38 +37,74 @@ export default function ComponentAssignment() {
   const [manualComponent, setManualComponent] = useState('none');
   const [manualStatus, setManualStatus] = useState<'manual-approved' | 'waitlisted'>('manual-approved');
 
+  const [voidModalOpen, setVoidModalOpen] = useState(false);
+  const [voidApplicant, setVoidApplicant] = useState<any | null>(null);
+  const [voidAttempts, setVoidAttempts] = useState<any[]>([]);
+  const [selectedAttemptId, setSelectedAttemptId] = useState<string>('');
+  const [voidReason, setVoidReason] = useState('');
+  const [voidUnplace, setVoidUnplace] = useState(false);
+  const [voidLoading, setVoidLoading] = useState(false);
+  const [voidError, setVoidError] = useState<string | null>(null);
+
+  const openVoidModal = async (applicant: any) => {
+    setVoidApplicant(applicant);
+    setVoidReason('');
+    setVoidUnplace(false);
+    setVoidError(null);
+    setVoidModalOpen(true);
+    setVoidLoading(true);
+    try {
+      const res = await fetchAdminQualifyingAttempts(applicant.userId);
+      const list = res?.data || [];
+      setVoidAttempts(list);
+      const active = list.find((a: any) => a.status !== 'VOIDED') || list[0];
+      setSelectedAttemptId(active?.id || '');
+    } catch (err: any) {
+      setVoidError(err?.message || 'Failed to fetch exam attempts for this student.');
+    } finally {
+      setVoidLoading(false);
+    }
+  };
+
+  const handleConfirmVoid = async () => {
+    if (!selectedAttemptId) {
+      setVoidError('Please select an attempt to void.');
+      return;
+    }
+    if (!voidReason.trim()) {
+      setVoidError('Reason is required to void an exam attempt.');
+      return;
+    }
+
+    setVoidLoading(true);
+    setVoidError(null);
+    try {
+      await voidAdminQualifyingExamAttempt(selectedAttemptId, {
+        reason: voidReason.trim(),
+        unplace: voidUnplace,
+      });
+      toast.success('Qualifying exam attempt voided successfully.');
+      setVoidModalOpen(false);
+      refreshResults();
+    } catch (err: any) {
+      setVoidError(err?.message || 'Failed to void exam attempt.');
+    } finally {
+      setVoidLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const savedState = loadComponentApplicationState();
-    setSlotLimits(savedState.slotLimits);
-    setQualifyingScore(savedState.qualifyingScore);
-    setApplicationClosed(savedState.applicationClosed);
-
-    loadResults();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === 'qualifyingExamResults') {
-        loadResults();
-      }
-    };
-
-    window.addEventListener('storage', handleStorage);
-
-    return () => window.removeEventListener('storage', handleStorage);
-  }, []);
+    if (serverStateList && serverStateList.length > 0) {
+      const savedState = serverStateList[0];
+      if (savedState.slotLimits) setSlotLimits(savedState.slotLimits);
+      if (typeof savedState.qualifyingScore === 'number') setQualifyingScore(savedState.qualifyingScore);
+      if (typeof savedState.applicationClosed === 'boolean') setApplicationClosed(savedState.applicationClosed);
+    }
+  }, [serverStateList]);
 
   useEffect(() => {
-    saveComponentApplicationState({
-      slotLimits,
-      qualifyingScore,
-      applicationClosed,
-      updatedAt: new Date().toISOString(),
-    });
-  }, [slotLimits, qualifyingScore, applicationClosed]);
-
-  const loadResults = () => {
-    const results = loadQualifyingExamResults();
-    setExamResults(results);
-    const hydratedAssignments = results.reduce((acc: Record<string, any>, result: any) => {
+    setExamResults(serverResults);
+    const hydratedAssignments = serverResults.reduce((acc: Record<string, any>, result: any) => {
       if (result.assignedComponent || result.status) {
         acc[result.userId] = {
           ...result,
@@ -75,24 +117,36 @@ export default function ComponentAssignment() {
     }, {});
     setAssignments(hydratedAssignments);
     setLastUpdated(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
+  }, [serverResults]);
+
+  const persistApplicationState = (newSlots: typeof slotLimits, newScore: number, newClosed: boolean) => {
+    upsertComponentStateMutation.mutate({
+      id: 'default',
+      slotLimits: newSlots,
+      qualifyingScore: newScore,
+      applicationClosed: newClosed,
+      updatedAt: new Date().toISOString(),
+    });
   };
 
   const refreshResults = () => {
-    loadResults();
+    refetchResults();
+    refetchState();
   };
 
   const handleSlotChange = (component: string, value: string) => {
     const canonical = toCanonicalComponentType(component);
     if (!canonical) return;
-    setSlotLimits(prev => ({
-      ...prev,
+    const newLimits = {
+      ...slotLimits,
       [canonical]: Math.max(0, parseInt(value, 10) || 0)
-    }));
+    };
+    setSlotLimits(newLimits);
+    persistApplicationState(newLimits, qualifyingScore, applicationClosed);
   };
 
-  const assignComponents = (options?: { forceClosed?: boolean }) => {
-    const latestResults = loadQualifyingExamResults();
-    setExamResults(latestResults);
+  const assignComponents = async (options?: { forceClosed?: boolean }) => {
+    const latestResults = serverResults.length > 0 ? serverResults : examResults;
     const shouldFillRemaining = options?.forceClosed ?? applicationClosed;
 
     if (latestResults.length === 0) {
@@ -155,9 +209,24 @@ export default function ComponentAssignment() {
       }
     });
 
-    // First pass: qualified students get preferred component if capacity is available
+    // Helper to find student record and allowed tracks
+    const getStudentAllowed = (userId: string, userEmail?: string) => {
+      const student = (students as any[]).find(
+        (s) => s.userId === userId || s.id === userId || s.email === userEmail
+      );
+      return getAllowedComponentsForProgram(
+        student?.course || student?.degreeProgram,
+        student?.school
+      );
+    };
+
+    // First pass: qualified students get preferred component if capacity is available and valid
     qualifiedResults.forEach((result: any) => {
-      const preferred = result.preferredComponent;
+      const allowed = getStudentAllowed(result.userId, result.userEmail);
+      let preferred = result.preferredComponent;
+      if (!allowed.includes(preferred as any)) {
+        preferred = allowed[0];
+      }
       const canonical = toCanonicalComponentType(preferred);
 
       if (canonical && slotsUsed[canonical] < (slotLimits[canonical] || 0)) {
@@ -165,7 +234,7 @@ export default function ComponentAssignment() {
           ...result,
           assignedComponent: preferred,
           rank: slotsUsed[canonical] + 1,
-          status: 'assigned-preferred'
+          status: 'assigned-preferred',
         };
         slotsUsed[canonical]++;
       } else {
@@ -173,9 +242,10 @@ export default function ComponentAssignment() {
       }
     });
 
-    // Second pass: remaining qualified students are reassigned to any component with vacancy
+    // Second pass: remaining qualified students are reassigned only to components allowed by their program
     unassignedQualified.forEach((result: any) => {
-      const availableComponent = COMPONENTS.find(comp => {
+      const allowed = getStudentAllowed(result.userId, result.userEmail);
+      const availableComponent = allowed.find((comp) => {
         const canonical = toCanonicalComponentType(comp);
         return canonical ? slotsUsed[canonical] < (slotLimits[canonical] || 0) : false;
       });
@@ -186,14 +256,14 @@ export default function ComponentAssignment() {
           ...result,
           assignedComponent: availableComponent,
           rank: slotsUsed[canonicalAvail] + 1,
-          status: 'assigned-alternative'
+          status: 'assigned-alternative',
         };
         slotsUsed[canonicalAvail]++;
       } else {
         newAssignments[result.userId] = {
           ...result,
           assignedComponent: null,
-          status: 'waitlisted'
+          status: 'waitlisted',
         };
       }
     });
@@ -241,15 +311,20 @@ export default function ComponentAssignment() {
 
     setAssignments(newAssignments);
 
-    // Save assignments back to localStorage
     const updatedResults = latestResults.map((result: QualifyingExamResult) => ({
       ...result,
       assignedComponent: newAssignments[result.userId]?.assignedComponent,
       rank: newAssignments[result.userId]?.rank,
       status: newAssignments[result.userId]?.status,
     }));
-    saveQualifyingExamResults(updatedResults);
-    syncStudentAccessFromQualifyingResults(updatedResults);
+
+    try {
+      await batchUpsert('qualifying-results', updatedResults);
+      refetchResults();
+      toast.success('Components assigned and saved successfully.');
+    } catch {
+      toast.error('Failed to save component assignments to server.');
+    }
     setLastUpdated(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }));
   };
 
@@ -258,11 +333,13 @@ export default function ComponentAssignment() {
     if (!shouldClose) return;
 
     setApplicationClosed(true);
+    persistApplicationState(slotLimits, qualifyingScore, true);
     assignComponents({ forceClosed: true });
   };
 
   const reopenApplications = () => {
     setApplicationClosed(false);
+    persistApplicationState(slotLimits, qualifyingScore, false);
   };
 
   const startApplicantEdit = (result: any) => {
@@ -272,40 +349,41 @@ export default function ComponentAssignment() {
     setManualStatus(current?.assignedComponent ? 'manual-approved' : 'waitlisted');
   };
 
-  const saveApplicantOverride = (result: any) => {
-    const allResults = loadQualifyingExamResults();
-    const updatedResults = allResults.map((row: any) => {
-      if (row.userId !== result.userId) return row;
+  const saveApplicantOverride = async (result: any) => {
+    const updated = {
+      ...result,
+      assignedComponent: manualComponent === 'none' ? null : manualComponent,
+      status: manualComponent === 'none' || manualStatus === 'waitlisted' ? 'waitlisted' : 'manual-approved',
+      adminOverride: true,
+    };
 
-      return {
-        ...row,
-        assignedComponent: manualComponent === 'none' ? null : manualComponent,
-        status: manualComponent === 'none' || manualStatus === 'waitlisted' ? 'waitlisted' : 'manual-approved',
-        adminOverride: true,
-      };
-    });
-
-    saveQualifyingExamResults(updatedResults);
-    setEditingApplicantId(null);
-    assignComponents();
+    try {
+      await upsertQualifyingResultMutation.mutateAsync(updated);
+      setEditingApplicantId(null);
+      toast.success('Applicant override saved.');
+      refetchResults();
+    } catch {
+      toast.error('Failed to update applicant override.');
+    }
   };
 
-  const clearApplicantOverride = (result: any) => {
-    const allResults = loadQualifyingExamResults();
-    const updatedResults = allResults.map((row: any) => {
-      if (row.userId !== result.userId) return row;
-      const { adminOverride, ...rest } = row;
-      return {
-        ...rest,
-        status: undefined,
-        assignedComponent: null,
-        rank: undefined,
-      };
-    });
+  const clearApplicantOverride = async (result: any) => {
+    const { adminOverride, ...rest } = result;
+    const updated = {
+      ...rest,
+      status: undefined,
+      assignedComponent: null,
+      rank: undefined,
+    };
 
-    saveQualifyingExamResults(updatedResults);
-    setEditingApplicantId(null);
-    assignComponents();
+    try {
+      await upsertQualifyingResultMutation.mutateAsync(updated);
+      setEditingApplicantId(null);
+      toast.success('Applicant override cleared.');
+      refetchResults();
+    } catch {
+      toast.error('Failed to clear applicant override.');
+    }
   };
 
   const getComponentStats = (component: string) => {
@@ -596,6 +674,12 @@ export default function ComponentAssignment() {
                   const assignment = (assignments as Record<string, any>)[result.userId];
                   const canonicalPref = toCanonicalComponentType(result.preferredComponent);
                   const isPriority = canonicalPref ? idx < (slotLimits[canonicalPref] ?? 0) : false;
+                  const student = (students as any[]).find(
+                    (s) => s.userId === result.userId || s.id === result.userId || s.email === result.userEmail
+                  );
+                  const isCrim = isCriminologyProgram(student?.course || student?.degreeProgram, student?.school);
+                  const isEdu = isTeacherEducationProgram(student?.course || student?.degreeProgram, student?.school);
+                  const allowedComps = getAllowedComponentsForProgram(student?.course || student?.degreeProgram, student?.school);
 
                   return (
                     <tr key={result.userId} className="border-b border-slate-100 hover:bg-blue-50/70 transition-colors dark:border-slate-800 dark:hover:bg-slate-800/40">
@@ -606,6 +690,21 @@ export default function ComponentAssignment() {
                         <div>
                           <p className="font-medium text-slate-900 dark:text-slate-100">{result.userName}</p>
                           <p className="text-sm text-slate-600 dark:text-slate-300">{result.userEmail}</p>
+                          {student && (
+                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                              {student.course || student.degreeProgram || student.school}
+                            </p>
+                          )}
+                          {isCrim && (
+                            <span className="inline-block mt-1 px-2 py-0.5 text-[11px] bg-amber-100 text-amber-800 rounded font-semibold dark:bg-amber-900/30 dark:text-amber-200">
+                              SCJE: Locked to MTS (ROTC)
+                            </span>
+                          )}
+                          {isEdu && (
+                            <span className="inline-block mt-1 px-2 py-0.5 text-[11px] bg-blue-100 text-blue-800 rounded font-semibold dark:bg-blue-900/30 dark:text-blue-200">
+                              STE: Locked to LTS
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="py-4 px-4">
@@ -678,7 +777,7 @@ export default function ComponentAssignment() {
                               className="w-full px-3 py-2 border border-slate-300 rounded-lg bg-white text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
                             >
                               <option value="none">No component (waitlist)</option>
-                              {COMPONENTS.map((comp: string) => (
+                              {allowedComps.map((comp: string) => (
                                 <option key={comp} value={comp}>{comp}</option>
                               ))}
                             </select>
@@ -712,13 +811,22 @@ export default function ComponentAssignment() {
                             </div>
                           </div>
                         ) : (
-                          <button
-                            onClick={() => startApplicantEdit(result)}
-                            className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
-                          >
-                            <Pencil className="w-3.5 h-3.5" />
-                            Edit Applicant
-                          </button>
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              onClick={() => startApplicantEdit(result)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                              Edit
+                            </button>
+                            <button
+                              onClick={() => openVoidModal(result)}
+                              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-rose-300 bg-white text-xs font-semibold text-rose-700 hover:bg-rose-50 dark:border-rose-500/30 dark:bg-slate-900 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                            >
+                              <Ban className="w-3.5 h-3.5" />
+                              Void Attempt
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -735,6 +843,111 @@ export default function ComponentAssignment() {
           )}
         </div>
       </div>
+
+      {voidModalOpen && voidApplicant && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/50 p-4">
+          <div className="w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-950">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                  Void Qualifying Exam Attempt
+                </h3>
+                <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                  Student: <span className="font-semibold text-slate-700 dark:text-slate-200">{voidApplicant.userName}</span> ({voidApplicant.userEmail})
+                </p>
+              </div>
+              <button
+                onClick={() => setVoidModalOpen(false)}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {voidError && (
+              <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                {voidError}
+              </div>
+            )}
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                  Select Attempt
+                </label>
+                {voidAttempts.length > 0 ? (
+                  <select
+                    value={selectedAttemptId}
+                    onChange={(e) => setSelectedAttemptId(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                  >
+                    {voidAttempts.map((att: any) => (
+                      <option key={att.id} value={att.id}>
+                        Attempt #{att.attemptNumber || 1} &mdash; Score: {att.score ?? 'N/A'}% &mdash; Status: {att.status} ({att.id.slice(0, 10)}...)
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {voidLoading ? 'Loading attempts...' : 'No exam attempts found on server for this student.'}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-300 mb-1">
+                  Reason for Voiding <span className="text-rose-500">*</span>
+                </label>
+                <textarea
+                  rows={3}
+                  value={voidReason}
+                  onChange={(e) => setVoidReason(e.target.value)}
+                  placeholder="Specify the reason for invalidating this attempt (required, min 1 character)..."
+                  className="w-full rounded-xl border border-slate-300 bg-white p-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                />
+              </div>
+
+              <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-3 dark:border-amber-500/30 dark:bg-amber-500/10">
+                <label className="flex items-start gap-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={voidUnplace}
+                    onChange={(e) => setVoidUnplace(e.target.checked)}
+                    className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                  />
+                  <div className="text-xs">
+                    <span className="font-semibold text-slate-900 dark:text-slate-100">Unplace student (opt-in)</span>
+                    <p className="text-slate-600 dark:text-slate-400 mt-0.5">
+                      Clears the student's assigned component and drops active term enrollments. Refused if grades exist or a newer attempt was completed.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setVoidModalOpen(false)}
+                  disabled={voidLoading}
+                  className="rounded-xl border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirmVoid}
+                  disabled={voidLoading || !voidReason.trim() || !selectedAttemptId}
+                  className="inline-flex items-center gap-2 rounded-xl bg-rose-600 px-5 py-2 text-sm font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                >
+                  {voidLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Void Attempt
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

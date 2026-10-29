@@ -30,9 +30,14 @@ export const registerSchema = z.object({
 
 export const loginSchema = z.object({
   body: z.object({
-    identifier: z.string().min(1, 'Email or student ID is required'),
+    identifier: z.string().optional(),
+    email: z.string().optional(),
+    username: z.string().optional(),
     password: z.string().min(1, 'Password is required'),
-  }).strict(),
+  }).refine((data) => Boolean(data.identifier || data.email || data.username), {
+    message: 'Email, student ID, or identifier is required',
+    path: ['identifier'],
+  }),
   params: z.object({}).optional(),
   query: z.object({}).optional(),
 });
@@ -210,5 +215,16 @@ export const createPaymentSchema = z.object({
     targetEnrollmentId: z.string().min(1, 'Target enrollment is required'),
   }).strict(),
   params: z.object({}).optional(),
+  query: z.object({}).optional(),
+});
+
+export const voidQualifyingExamAttemptSchema = z.object({
+  body: z.object({
+    reason: z.string().trim().min(1, 'Reason is required for voiding an exam attempt.').max(1000),
+    unplace: z.boolean().optional().default(false),
+  }),
+  params: z.object({
+    id: z.string().trim().min(1, 'Attempt ID is required').max(200),
+  }),
   query: z.object({}).optional(),
 });

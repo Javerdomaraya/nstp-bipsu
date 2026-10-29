@@ -30,6 +30,10 @@ export async function deleteStudent(id: string) {
   return apiDel<{ deleted: string }>(`${BASE}/students/${id}`, null as unknown as { deleted: string });
 }
 
+export async function patchStudent(id: string, patch: Partial<NstpStudent>) {
+  return apiPatch<NstpStudent>(`${BASE}/students/${encodeURIComponent(id)}`, patch, null as unknown as NstpStudent);
+}
+
 export async function fetchModules() {
   return apiGet<NstpModule[]>(`${BASE}/modules`, []);
 }
@@ -98,6 +102,15 @@ export async function upsertAttendanceSession(payload: NstpAttendanceSession) {
 
 export async function fetchQualifyingResults() {
   return apiGet<QualifyingExamResult[]>(`${BASE}/qualifying-results`, []);
+}
+
+export async function fetchAdminQualifyingAttempts(userId?: string) {
+  const query = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+  return apiGet<{ success: boolean; data: any[] }>(`${BASE}/qualifying-exam/attempts${query}`, { success: true, data: [] });
+}
+
+export async function voidAdminQualifyingExamAttempt(attemptId: string, payload: { reason: string; unplace?: boolean }) {
+  return apiPost<{ success: boolean; data: any; message?: string }>(`${BASE}/qualifying-exam/attempts/${attemptId}/void`, payload);
 }
 
 export async function fetchMyQualifyingResults() {
@@ -170,4 +183,30 @@ export async function searchBarangays(municipalityCode: string, query: string) {
   const params = new URLSearchParams({ municipalityCode });
   if (query) params.set('q', query);
   return apiGet<{ success: boolean; data: Barangay[] }>(`/address/barangays/search?${params.toString()}`, { success: false, data: [] });
+}
+
+// --- Announcements API ---
+
+export type Announcement = {
+  id: string;
+  title: string;
+  message: string;
+  audience: 'all' | 'student' | 'facilitator' | 'coordinator' | 'admin';
+  priority: 'normal' | 'high';
+  createdBy: string;
+  createdById?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export async function fetchAnnouncements() {
+  return apiGet<Announcement[]>('/nstp/announcements', []);
+}
+
+export async function createAnnouncement(payload: { title: string; message: string; audience: string; priority: string }) {
+  return apiPost<Announcement>('/nstp/announcements', payload, null as unknown as Announcement);
+}
+
+export async function deleteAnnouncement(id: string) {
+  return apiDel<{ id: string; deleted: boolean }>(`/nstp/announcements/${encodeURIComponent(id)}`, { id, deleted: false });
 }

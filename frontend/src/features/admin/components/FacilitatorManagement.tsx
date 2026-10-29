@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BadgeCheck, Building2, Download, Eye, EyeOff, Filter, KeyRound, LockKeyhole, Mail, MoreVertical, Pencil, Plus, Save, Search, Trash2, Users, X } from 'lucide-react';
-import { BILIRAN_MUNICIPALITIES, BIPSU_PROGRAMS, INDUSTRIAL_TECHNOLOGY_MAJORS, INDUSTRIAL_TECHNOLOGY_PROGRAM, loadAccounts, loadStudents, NstpAccount, NSTP_COMPONENTS, saveAccounts, SECONDARY_EDUCATION_MAJORS, SECONDARY_EDUCATION_PROGRAM } from '../../../data/nstpData';
-import { apiDel, apiPost } from '../../../services/apiClient';
+import { BILIRAN_MUNICIPALITIES, BIPSU_PROGRAMS, INDUSTRIAL_TECHNOLOGY_MAJORS, INDUSTRIAL_TECHNOLOGY_PROGRAM, NstpAccount, NSTP_COMPONENTS, SECONDARY_EDUCATION_MAJORS, SECONDARY_EDUCATION_PROGRAM } from '../../../data/nstpData';
+import { useAccounts, useStudents, useUpsertAccount, useDeleteAccount } from '../../../hooks/index';
+import { toast } from 'sonner';
 
 type Props = {
   admin: NstpAccount;
@@ -26,7 +27,12 @@ const emptyFacilitator = (): NstpAccount => ({
 const initials = (name: string) => name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 
 export default function FacilitatorManagement({ admin }: Props) {
-  const [facilitators, setFacilitators] = useState<NstpAccount[]>([]);
+  const { data: allAccounts = [] } = useAccounts();
+  const { data: students = [] } = useStudents();
+  const upsertAccountMutation = useUpsertAccount();
+  const deleteAccountMutation = useDeleteAccount();
+
+  const facilitators = useMemo(() => allAccounts.filter((account) => account.role === 'facilitator'), [allAccounts]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<NstpAccount | null>(null);
   const [query, setQuery] = useState('');
@@ -36,10 +42,10 @@ export default function FacilitatorManagement({ admin }: Props) {
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
-    const nextFacilitators = loadAccounts().filter((account) => account.role === 'facilitator');
-    setFacilitators(nextFacilitators);
-    setSelectedId(nextFacilitators[0]?.id ?? null);
-  }, []);
+    if (!selectedId && facilitators.length > 0) {
+      setSelectedId(facilitators[0]?.id ?? null);
+    }
+  }, [facilitators, selectedId]);
 
   useEffect(() => {
     if (editingId) {
@@ -60,7 +66,6 @@ export default function FacilitatorManagement({ admin }: Props) {
     };
   }, [editingId]);
 
-  const students = useMemo(() => loadStudents(), [facilitators]);
   const coveredMunicipalities = useMemo(() => new Set(facilitators.flatMap((facilitator) => facilitator.municipalities || [])).size, [facilitators]);
   const unassignedMunicipalities = Math.max(0, BILIRAN_MUNICIPALITIES.length - coveredMunicipalities);
 
@@ -79,12 +84,6 @@ export default function FacilitatorManagement({ admin }: Props) {
   const selectedFacilitator = facilitators.find((facilitator) => facilitator.id === selectedId) || filteredFacilitators[0] || facilitators[0] || null;
   const selectedStudents = selectedFacilitator ? assignedStudentsFor(selectedFacilitator) : [];
 
-  const persist = async (nextFacilitators: NstpAccount[]) => {
-    const allAccounts = loadAccounts().filter((account) => account.role !== 'facilitator');
-    await saveAccounts([...allAccounts, ...nextFacilitators]);
-    setFacilitators(nextFacilitators);
-  };
-
   const startNew = () => {
     setFormError(null);
     setEditingId('new');
@@ -99,11 +98,14 @@ export default function FacilitatorManagement({ admin }: Props) {
   };
 
   const removeFacilitator = async (facilitatorId: string) => {
-    const result = await apiDel(`/nstp/admin/accounts/${facilitatorId}`, null);
-    if (result) {
-      const nextFacilitators = facilitators.filter((facilitator) => facilitator.id !== facilitatorId);
-      persist(nextFacilitators);
-      setSelectedId(nextFacilitators[0]?.id ?? null);
+    try {
+      await deleteAccountMutation.mutateAsync(facilitatorId);
+      toast.success('Facilitator removed.');
+      if (selectedId === facilitatorId) {
+        setSelectedId(null);
+      }
+    } catch {
+      toast.error('Unable to remove facilitator.');
     }
   };
 
@@ -120,15 +122,14 @@ export default function FacilitatorManagement({ admin }: Props) {
       role: 'facilitator' as const,
       municipalities,
     };
-    const result = await apiPost<any>('/nstp/admin/accounts', nextFacilitator, null);
-    if (result) {
-      const nextFacilitators = facilitators.some((facilitator) => facilitator.id === nextFacilitator.id)
-        ? facilitators.map((facilitator) => (facilitator.id === nextFacilitator.id ? nextFacilitator : facilitator))
-        : [nextFacilitator, ...facilitators];
-      persist(nextFacilitators);
+    try {
+      await upsertAccountMutation.mutateAsync(nextFacilitator);
       setSelectedId(nextFacilitator.id);
       setEditingId(null);
       setForm(null);
+      toast.success('Facilitator saved.');
+    } catch (err: any) {
+      setFormError(err?.message || 'Unable to save facilitator.');
     }
   };
 

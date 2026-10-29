@@ -43,6 +43,27 @@ const originalResultFindMany = prisma.qualifyingExamResult?.findMany;
 const originalResultFindFirst = prisma.qualifyingExamResult?.findFirst;
 const originalResultUpsert = prisma.qualifyingExamResult?.upsert;
 const originalStateFindFirst = prisma.componentApplicationState?.findFirst;
+const originalStateFindMany = prisma.componentApplicationState?.findMany;
+const originalAttemptUpdateMany = prisma.qualifyingExamAttempt?.updateMany;
+
+const defaultMockAppState = {
+  id: 'default',
+  slotLimits: { CWTS: 10, MTS_NAVY: 1, MTS_ARMY: 10, LTS: 10 },
+  qualifyingScore: 70,
+  schoolYear: '2025-2026',
+  semester: 'FIRST',
+  applicationClosed: false,
+  isCurrent: true,
+};
+
+beforeEach(() => {
+  if (prisma.componentApplicationState) {
+    prisma.componentApplicationState.findMany = async () => [defaultMockAppState];
+  }
+  if (prisma.qualifyingExamAttempt) {
+    prisma.qualifyingExamAttempt.updateMany = async () => ({ count: 0 });
+  }
+});
 
 afterEach(() => {
   if (originalModuleProgressFindMany) prisma.moduleProgress.findMany = originalModuleProgressFindMany;
@@ -50,12 +71,14 @@ afterEach(() => {
   if (originalAttemptCreate) prisma.qualifyingExamAttempt.create = originalAttemptCreate;
   if (originalAttemptFindFirst) prisma.qualifyingExamAttempt.findFirst = originalAttemptFindFirst;
   if (originalAttemptUpdate) prisma.qualifyingExamAttempt.update = originalAttemptUpdate;
+  if (originalAttemptUpdateMany) prisma.qualifyingExamAttempt.updateMany = originalAttemptUpdateMany;
   if (originalExamFindFirst) prisma.exam.findFirst = originalExamFindFirst;
   if (originalTransaction) prisma.$transaction = originalTransaction;
   if (originalResultFindMany) prisma.qualifyingExamResult.findMany = originalResultFindMany;
   if (originalResultFindFirst) prisma.qualifyingExamResult.findFirst = originalResultFindFirst;
   if (originalResultUpsert) prisma.qualifyingExamResult.upsert = originalResultUpsert;
   if (originalStateFindFirst) prisma.componentApplicationState.findFirst = originalStateFindFirst;
+  if (originalStateFindMany) prisma.componentApplicationState.findMany = originalStateFindMany;
 });
 
 test('a student cannot start under 25 hours', async () => {
@@ -186,9 +209,9 @@ test('a student cannot submit a score', async () => {
   });
   prisma.$transaction = async (cb) => {
     const tx = {
-      $queryRaw: async () => [{ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70 }],
+      $queryRaw: async () => [defaultMockAppState],
       componentApplicationState: {
-        findFirst: async () => ({ id: 'default', slotLimits: { CWTS: 10 }, qualifyingScore: 70 }),
+        findFirst: async () => defaultMockAppState,
       },
       qualifyingExamResult: {
         findMany: async () => [],
@@ -267,10 +290,15 @@ test('two concurrent submits for the last slot yield one assigned-preferred and 
     id: 'default',
     slotLimits: { MTS_NAVY: 1 },
     qualifyingScore: 70,
+    schoolYear: '2025-2026',
+    semester: 'FIRST',
+    applicationClosed: false,
+    isCurrent: true,
   };
 
   // Shared in-memory list of assigned results to simulate database state
   const assignedStore = [];
+  const enrollmentStore = [];
 
   prisma.exam.findFirst = async () => ({
     id: 'qualifying-exam-master',
@@ -323,10 +351,14 @@ test('two concurrent submits for the last slot yield one assigned-preferred and 
         findFirst: async () => ({ id: 'comp-mts-navy', type: 'MTS_NAVY' }),
       },
       enrollment: {
-        findMany: async () => [],
+        findMany: async () => enrollmentStore.map((e) => ({ studentId: e.studentId })),
         findFirst: async () => null,
-        create: async ({ data }) => ({ id: 'enr-1', ...data }),
+        create: async ({ data }) => {
+          enrollmentStore.push(data);
+          return { id: `enr-${enrollmentStore.length}`, ...data };
+        },
         update: async ({ data }) => ({ id: 'enr-1', ...data }),
+        updateMany: async () => ({ count: 0 }),
       },
     };
     return cb(tx);

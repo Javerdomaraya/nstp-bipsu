@@ -25,13 +25,8 @@ import {
 import { Area, AreaChart, Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import StatCard from '../../../components/common/StatCard';
 import DataTable, { ColumnDef } from '../../../components/common/DataTable';
-import {
-  loadAssessments,
-  loadModules,
-  loadPendingStudentRegistrations,
-  loadStudents,
-  type NstpModule,
-} from '../../../data/nstpData';
+import type { NstpModule } from '../../../data/nstpData';
+import { useStudents, useModules, useAssessments, usePendingRegistrations } from '../../../hooks/index';
 import { getCurrentSchoolYear } from '../../../utils/academicYear';
 import { getCurrentAcademicYear } from '../../../utils/academicYear';
 import { apiGet } from '../../../services/apiClient';
@@ -97,11 +92,11 @@ const roleCopy = {
 };
 
 export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashboardHomeProps) {
-  const students = loadStudents();
-  const modules = loadModules();
-  const assessments = loadAssessments();
+  const { data: students = [] } = useStudents();
+  const { data: modules = [] } = useModules();
+  const { data: assessments = [] } = useAssessments();
   const [grades, setGrades] = useState<SemesterGrade[]>([]);
-  const pending = loadPendingStudentRegistrations();
+  const { data: pending = [] } = usePendingRegistrations();
   const copy = roleCopy[role] || roleCopy.student;
 
   const publishedAssessments = assessments.filter((assessment) => assessment.status === 'published');

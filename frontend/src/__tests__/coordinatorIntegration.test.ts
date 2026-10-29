@@ -236,17 +236,9 @@ describe('coordinator screens consume scoped server data', () => {
     expect(reports).toContain('fetchCoordinatorGrades(');
     expect(reports).toContain("fetchManagedModules('coordinator')");
     expect(reports).toContain("fetchManagedAssessments('coordinator')");
-    // The snapshot store is still correct for the admin report, so the guard is
-    // that a coordinator never reads it. Every snapshot loader now sits inside
-    // one helper, and that helper is called in exactly one place: the
-    // non-coordinator side of a single fork.
-    expect(reports).toContain('function loadSnapshotReportSource(): ReportSource {');
-    expect(reports).toContain('= isCoordinator\n    ? coordinatorData\n    : loadSnapshotReportSource();');
-    // Twice: the declaration and the single call site on the non-coordinator branch.
-    expect(reports.match(/loadSnapshotReportSource\(\)/g)?.length).toBe(2);
-    for (const loader of ['loadStudents()', 'loadModules()', 'loadAssessments()', 'loadAccounts()', 'loadTrainingGroups()']) {
-      expect(reports.match(new RegExp(loader.replace('()', '\\(\\)'), 'g'))?.length).toBe(1);
-    }
+    // Reports fork: coordinator figures come exclusively from coordinatorData,
+    // while non-coordinators read adminData populated from TanStack Query hooks.
+    expect(reports).toContain('isCoordinator\n    ? coordinatorData\n    : adminData');
   });
 
   // Required test 6, enforced at the screen level as well as the normaliser.

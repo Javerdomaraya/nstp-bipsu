@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { BookOpen, Clock, CheckCircle, Search, Sparkles, Gauge, ChevronRight, Plus, Trash2, Save, ArrowLeft, ArrowUp, ArrowDown, Copy, Wrench, Video, ExternalLink } from 'lucide-react';
-import { createEmptyModule, loadModules, replaceAssessmentsSnapshot, replaceModulesSnapshot, type NstpAssessment, type NstpModule, type NstpRole } from '../data/nstpData';
+import { createEmptyModule, type NstpAssessment, type NstpModule, type NstpRole } from '../data/nstpData';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../utils/moduleUrls';
 import { apiGet, apiPost } from '../services/apiClient';
 import { createManagedModule, fetchManagedModules, removeManagedModule, updateManagedModule } from '../services/modules';
@@ -52,25 +52,9 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
       : nextModules[0] || null);
   }, []);
 
-  useEffect(() => {
-    // Coordinators neither seed from nor subscribe to the shared snapshot:
-    // reading it would surface modules from outside their component while their
-    // own scoped request was still in flight.
-    if (isComponentScoped) return;
-    const reloadModules = () => applyModuleList(loadModules());
-    reloadModules();
-    window.addEventListener('nstp-modules-updated', reloadModules);
-    return () => window.removeEventListener('nstp-modules-updated', reloadModules);
-  }, [applyModuleList, isComponentScoped]);
-
-  /**
-   * The single place that decides where a module list goes: component state
-   * always, shared snapshot only when the list is not component-scoped.
-   */
   const applyModules = useCallback((nextModules: NstpModule[]) => {
     applyModuleList(nextModules);
-    if (!isComponentScoped) replaceModulesSnapshot(nextModules);
-  }, [applyModuleList, isComponentScoped]);
+  }, [applyModuleList]);
 
   useEffect(() => {
     let active = true;
@@ -96,7 +80,6 @@ export default function ModulesPage({ user, role = 'student', onBack }: { user: 
       : fetchManagedAssessments(effectiveRole as 'admin' | 'coordinator' | 'facilitator');
     request.then((records) => {
       setAssessments(records);
-      if (!isComponentScoped) replaceAssessmentsSnapshot(records);
     }).catch((error) => setModuleError(error instanceof Error ? error.message : 'Unable to load linked assessments.'));
   }, [effectiveRole, isComponentScoped]);
 

@@ -31,7 +31,8 @@ export async function handleRegister(req, res) {
 
 export async function handleLogin(req, res) {
   try {
-    const { identifier, password } = req.body;
+    const identifier = req.body.identifier || req.body.email || req.body.username;
+    const { password } = req.body;
     const { token, user } = await loginUser(identifier, password);
     res.cookie(SESSION_COOKIE, token, sessionCookieOptions);
     return sendSuccess(res, { user });

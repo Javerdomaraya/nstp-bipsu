@@ -1,9 +1,11 @@
+import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
 import prisma from '../../db/prisma.js';
 import { env } from '../../config/env.js';
 import { studentSelfSelect, toStudentSelfProfileDto } from './user.dto.js';
 import { assertPlaintextPassword } from './passwords.js';
+import { getAutomaticTrackRouting } from '../../constants/bipsuPrograms.js';
 
 const loginUserSelect = {
   id: true, name: true, email: true, role: true, status: true, passwordHash: true, data: true,
@@ -125,6 +127,16 @@ export async function submitPendingRegistration(payload) {
     err.statusCode = 409;
     throw err;
   }
+
+  // Enforce automatic track routing at registration stage
+  const autoTrack = getAutomaticTrackRouting(details.degreeProgram, details.school || details.department);
+  if (autoTrack === 'MTS') {
+    const rawPref = String(details.preferredComponent || '').toLowerCase();
+    details.preferredComponent = rawPref.includes('navy') ? 'MTS (Navy)' : 'MTS (Army)';
+  } else if (autoTrack === 'LTS') {
+    details.preferredComponent = 'LTS';
+  }
+
   await prisma.pendingRegistration.create({
     data: {
       id: `pending-${crypto.randomUUID()}`,
@@ -221,19 +233,41 @@ export async function loginUser(identifier, password) {
     throw err;
   }
 
-  let user = await prisma.user.findUnique({
-    where: { email: identifier },
+  const trimmed = identifier.trim();
+
+  let user = await prisma.user.findFirst({
+    where: {
+      OR: [
+        { email: { equals: trimmed, mode: 'insensitive' } },
+        { studentProfile: { studentNumber: { equals: trimmed, mode: 'insensitive' } } },
+      ],
+    },
     select: loginUserSelect,
   });
 
   if (!user) {
-    user = await prisma.user.findFirst({
-      where: { studentProfile: { studentNumber: identifier } },
-      select: loginUserSelect,
+    const pending = await prisma.pendingRegistration.findFirst({
+      where: {
+        OR: [
+          { email: { equals: trimmed, mode: 'insensitive' } },
+          { studentId: { equals: trimmed, mode: 'insensitive' } },
+        ],
+      },
+      select: { id: true, status: true, rejectionReason: true },
     });
-  }
+    if (pending) {
+      if (pending.status === 'PENDING') {
+        const err = new Error('Your registration is pending administrator verification. Please wait for the NSTP Director to approve your account.');
+        err.statusCode = 403;
+        throw err;
+      }
+      if (pending.status === 'REJECTED') {
+        const err = new Error(`Your registration was rejected: ${pending.rejectionReason || 'Please contact the NSTP Director.'}`);
+        err.statusCode = 403;
+        throw err;
+      }
+    }
 
-  if (!user) {
     const err = new Error('Invalid credentials.');
     err.statusCode = 401;
     throw err;
@@ -246,7 +280,7 @@ export async function loginUser(identifier, password) {
     throw err;
   }
 
-  if (user.status && user.status !== 'ACTIVE') {
+  if (user.status && String(user.status).toUpperCase() !== 'ACTIVE') {
     const err = new Error('This account is inactive. Contact an administrator.');
     err.statusCode = 403;
     throw err;

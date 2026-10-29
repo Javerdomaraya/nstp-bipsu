@@ -14,7 +14,14 @@ if ('serviceWorker' in navigator) {
 
 const queryClient = new QueryClient({
   defaultOptions: {
-    queries: { retry: 2, staleTime: 30_000 },
+    queries: {
+      retry: (failureCount, error: any) => {
+        if (error?.status === 401 || error?.status === 403) return false;
+        if (error?.retryable === false) return false;
+        return failureCount < 2;
+      },
+      staleTime: 30_000,
+    },
   },
 });
 

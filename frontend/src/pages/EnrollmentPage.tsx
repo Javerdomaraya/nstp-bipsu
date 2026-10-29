@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles } from 'lucide-react';
+import { useState, useMemo } from 'react';
+import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles, AlertTriangle } from 'lucide-react';
 import RoleShell from '../components/layout/RoleShell';
-import type { NstpComponent } from '../data/nstpData';
+import { isCriminologyProgram, isTeacherEducationProgram, type NstpComponent } from '../data/nstpData';
 import type { StudentUser } from '../services/authUser';
 
 // `as const` is what keeps `name` a literal type rather than a widened `string`,
@@ -86,7 +86,29 @@ type ComponentOption = (typeof NSTP_COMPONENTS)[number];
 export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: StudentUser; onEnroll: (component: NstpComponent) => void; onLogout: () => void }) {
   // Show completion message
   const hasCompletedGeneralEd = user.generalEducationComplete;
-  const [selectedComponent, setSelectedComponent] = useState<ComponentOption | null>(null);
+
+  const isCrim = isCriminologyProgram(user.degreeProgram, user.school);
+  const isEdu = isTeacherEducationProgram(user.degreeProgram, user.school);
+
+  const availableComponents = useMemo(() => {
+    if (isCrim) {
+      return NSTP_COMPONENTS.filter((c) => c.name === 'MTS (Army)' || c.name === 'MTS (Navy)');
+    }
+    if (isEdu) {
+      return NSTP_COMPONENTS.filter((c) => c.name === 'LTS');
+    }
+    return NSTP_COMPONENTS;
+  }, [isCrim, isEdu]);
+
+  const [selectedComponent, setSelectedComponent] = useState<ComponentOption | null>(() => {
+    if (isEdu) {
+      return NSTP_COMPONENTS.find((c) => c.name === 'LTS') || null;
+    }
+    if (isCrim) {
+      return NSTP_COMPONENTS.find((c) => c.name === 'MTS (Army)') || null;
+    }
+    return null;
+  });
 
   const handleEnroll = () => {
     if (selectedComponent) {
@@ -122,6 +144,31 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
           </div>
         </div>
 
+        {/* Automatic Routing Callout Banner */}
+        {isCrim && (
+          <div className="mb-6 rounded-2xl border-2 border-amber-400 bg-amber-50 p-5 shadow-sm dark:border-amber-500/40 dark:bg-amber-500/10">
+            <div className="flex items-center gap-2 mb-2 font-bold text-amber-900 dark:text-amber-200 text-base">
+              <Shield className="w-5 h-5 text-amber-600" />
+              <span>Mandatory Track Routing: Military Training Service (MTS / ROTC)</span>
+            </div>
+            <p className="text-sm text-slate-700 dark:text-slate-200">
+              BiPSU institutional policy requires all BS in Criminology students (School of Criminal Justice Education) to complete the <strong>MTS (ROTC)</strong> track for specialized tactical and law enforcement preparation. You may choose between <strong>MTS Army</strong> and <strong>MTS Navy</strong>.
+            </p>
+          </div>
+        )}
+
+        {isEdu && (
+          <div className="mb-6 rounded-2xl border-2 border-blue-400 bg-blue-50 p-5 shadow-sm dark:border-blue-500/40 dark:bg-blue-500/10">
+            <div className="flex items-center gap-2 mb-2 font-bold text-blue-900 dark:text-blue-200 text-base">
+              <Shield className="w-5 h-5 text-blue-600" />
+              <span>Mandatory Track Routing: Literacy Training Service (LTS)</span>
+            </div>
+            <p className="text-sm text-slate-700 dark:text-slate-200">
+              Students in the School of Teacher Education are automatically routed to the <strong>Literacy Training Service (LTS)</strong> to apply pedagogy and teaching methods directly in Biliran school communities.
+            </p>
+          </div>
+        )}
+
         {/* Header */}
         <div className="text-center mb-8">
           {hasCompletedGeneralEd && (
@@ -130,16 +177,21 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
               <span className="font-medium">General Education Complete - 25 Hours</span>
             </div>
           )}
-          <h1 className="text-3xl font-bold text-slate-900 mb-3 dark:text-slate-100">Select Your NSTP Component</h1>
+          <h1 className="text-3xl font-bold text-slate-900 mb-3 dark:text-slate-100">
+            {isCrim ? 'Select Your MTS Service Branch' : isEdu ? 'Confirm Your LTS Enrollment' : 'Select Your NSTP Component'}
+          </h1>
           <p className="text-slate-600 max-w-2xl mx-auto dark:text-slate-300">
-            Choose the National Service Training Program component that aligns with your interests and career goals.
-            Each component includes specialized training and community service.
+            {isCrim
+              ? 'Choose your military training branch: Philippine Army or Philippine Navy.'
+              : isEdu
+              ? 'Confirm your enrollment in the Literacy Training Service to proceed with teaching modules.'
+              : 'Choose the National Service Training Program component that aligns with your interests and career goals.'}
           </p>
         </div>
 
         {/* Component Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-          {NSTP_COMPONENTS.map((component) => {
+          {availableComponents.map((component) => {
             const Icon = component.icon;
             const isSelected = selectedComponent?.id === component.id;
 

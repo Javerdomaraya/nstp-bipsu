@@ -30,7 +30,9 @@ export async function searchBarangays(req, res) {
   if (!municipalityCode) {
     return res.status(400).json({ success: false, error: 'municipalityCode query parameter is required.' });
   }
-  if (q !== undefined && (typeof q !== 'string' || q.trim().length < 2 || q.trim().length > 80)) return res.status(400).json({ success: false, error: 'Search query must be 2 to 80 characters.' });
+  if (q !== undefined && q !== '' && (typeof q !== 'string' || q.trim().length > 80)) {
+    return res.status(400).json({ success: false, error: 'Search query must be at most 80 characters.' });
+  }
   const where = { municipalityCode: code(municipalityCode, 'municipalityCode') };
   if (q && q.trim()) {
     where.name = { contains: q.trim(), mode: 'insensitive' };

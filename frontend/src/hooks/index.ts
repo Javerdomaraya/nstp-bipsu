@@ -43,8 +43,17 @@ export function useDeleteStudent() {
   return useGenericMutation(['students'], (id: string) => api.deleteStudent(id));
 }
 
-export function useModules() {
-  return useGenericQuery(['modules'], api.fetchModules);
+export function usePatchStudent() {
+  return useGenericMutation(['students', 'accounts', 'summary'], ({ id, patch }: { id: string; patch: Partial<NstpStudent> }) => api.patchStudent(id, patch));
+}
+
+export function useModules(options?: { enabled?: boolean }) {
+  return useQuery<NstpModule[]>({
+    queryKey: ['modules'],
+    queryFn: api.fetchModules,
+    staleTime: STALE_TIME,
+    enabled: options?.enabled,
+  });
 }
 
 export function useUpsertModule() {
@@ -55,8 +64,13 @@ export function useDeleteModule() {
   return useGenericMutation(['modules'], (id: string) => api.deleteModule(id));
 }
 
-export function useAssessments() {
-  return useGenericQuery(['assessments'], api.fetchAssessments);
+export function useAssessments(options?: { enabled?: boolean }) {
+  return useQuery<NstpAssessment[]>({
+    queryKey: ['assessments'],
+    queryFn: api.fetchAssessments,
+    staleTime: STALE_TIME,
+    enabled: options?.enabled,
+  });
 }
 
 export function useUpsertAssessment() {
@@ -149,4 +163,16 @@ export function useUpsertPendingRegistration() {
 
 export function useDeletePendingRegistration() {
   return useGenericMutation(['pending-registrations'], (id: string) => api.deletePendingRegistration(id));
+}
+
+export function useAnnouncements() {
+  return useGenericQuery(['announcements'], api.fetchAnnouncements);
+}
+
+export function useCreateAnnouncement() {
+  return useGenericMutation(['announcements'], (data: { title: string; message: string; audience: string; priority: string }) => api.createAnnouncement(data));
+}
+
+export function useDeleteAnnouncement() {
+  return useGenericMutation(['announcements'], (id: string) => api.deleteAnnouncement(id));
 }

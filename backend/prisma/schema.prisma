@@ -120,6 +120,7 @@ model User {
   followers          Follow[]            @relation("FollowTarget")
   payments           Payment[]
   qualifyingAttempts QualifyingExamAttempt[]
+  announcements      Announcement[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -700,4 +701,21 @@ model ProfileExportTemplate {
   @@index([templateKey, status, createdAt])
   @@index([templateKey, isActive])
   @@map("profile_export_template")
+}
+
+
+model Announcement {
+  id        String   @id @default(cuid())
+  title     String
+  message   String
+  audience  String   @default("all")
+  priority  String   @default("normal")
+  createdBy String
+  author    User?    @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([audience])
+  @@index([createdBy])
+  @@map("announcement")
 }

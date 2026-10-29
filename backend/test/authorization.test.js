@@ -289,7 +289,7 @@ test('single-account and related user responses exclude credential fields', asyn
 
   prisma.studentProfile.findMany = async ({ select }) => {
     assert.equal(select.user.select.passwordHash, undefined);
-    assert.equal(select.data, undefined);
+    assert.equal(select.user.select.password, undefined);
     return [];
   };
   assert.deepEqual(await listAdminResource('students'), []);
@@ -361,8 +361,8 @@ test('the account provisioning service contains no known fallback password', asy
 
 test('login sets an HttpOnly session cookie and /auth/me accepts that cookie', async () => {
   const passwordHash = await bcrypt.hash('valid-password', 10);
-  prisma.user.findUnique = async ({ where }) => {
-    if (where.email) {
+  const mockUser = ({ where }) => {
+    if (where?.email || where?.OR) {
       return {
         id: 'cookie-user', name: 'Cookie User', email: 'cookie@example.test', role: 'STUDENT',
         passwordHash, data: {}, studentProfile: { studentNumber: '2026-0002' },
@@ -370,6 +370,8 @@ test('login sets an HttpOnly session cookie and /auth/me accepts that cookie', a
     }
     return { id: 'cookie-user', name: 'Cookie User', email: 'cookie@example.test', role: 'STUDENT', data: {}, studentProfile: null };
   };
+  prisma.user.findUnique = async (args) => mockUser(args);
+  prisma.user.findFirst = async (args) => mockUser(args);
   const login = await request('/api/auth/login', {
     method: 'POST', body: { identifier: 'cookie@example.test', password: 'valid-password' },
   });

@@ -160,6 +160,7 @@ export function StudentAcademicSection({ student }: { student: NstpStudent }) {
   return (
     <ProfileCard title="Academic Information" description="Program and NSTP assignment">
       <dl className="mt-2 grid divide-y divide-slate-100 dark:divide-slate-800 sm:grid-cols-2 sm:gap-x-5 sm:divide-y-0">
+        <InfoItem icon={GraduationCap} label="School" value={student.school || student.department} />
         <InfoItem icon={GraduationCap} label="Degree Program" value={student.degreeProgram} />
         <InfoItem icon={CalendarDays} label="Year Level" value={student.yearLevel} />
         <InfoItem icon={BookOpen} label="Major" value={student.major} />

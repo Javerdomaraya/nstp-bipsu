@@ -56,6 +56,20 @@ export async function getCurrentCoordinator(req, res, next) {
   return next();
 }
 
+export async function getCurrentStaffContext(req, res, next) {
+  const role = req.user?.role;
+  if (role === 'ADMIN') {
+    return next();
+  }
+  if (role === 'COORDINATOR') {
+    return getCurrentCoordinator(req, res, next);
+  }
+  if (role === 'INSTRUCTOR') {
+    return getCurrentInstructor(req, res, next);
+  }
+  return sendError(res, 'Access denied.', 403);
+}
+
 export async function requireAssignedSection(req, res, next) {
   const section = await prisma.section.findUnique({ where: { id: req.params.classId } });
   if (!section) return sendError(res, 'Class not found.', 404);

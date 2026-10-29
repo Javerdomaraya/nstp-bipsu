@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { FileText, CheckCircle, Clock, Award, TrendingUp, History, AlertTriangle, ArrowLeft, Loader2 } from 'lucide-react';
-import { replaceAssessmentsSnapshot, NstpAssessment } from '../data/nstpData';
+import { NstpAssessment } from '../data/nstpData';
 import { apiGet, apiPost } from '../services/apiClient';
 import { fetchStudentAssessments } from '../services/assessments';
 import type { AuthenticatedUser } from '../services/authUser';
@@ -33,7 +33,6 @@ export default function AssessmentsPage({ user, onBack }: { user: AuthenticatedU
     fetchStudentAssessments()
       .then((items) => {
         setLibrary(items);
-        replaceAssessmentsSnapshot(items);
         setLibraryError(null);
       })
       .catch((error) => setLibraryError(error instanceof Error ? error.message : 'Unable to load assessments.'));

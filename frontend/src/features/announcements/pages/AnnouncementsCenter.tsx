@@ -1,55 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bell, Megaphone, Search, CheckCircle2, CircleAlert, Send } from 'lucide-react';
+import { Bell, Megaphone, Search, CheckCircle2, CircleAlert, Send, Trash2 } from 'lucide-react';
+import { toast } from 'sonner';
+import { useQueryClient } from '@tanstack/react-query';
 import { safeJsonParse } from '../../../data/nstpData';
 import type { AuthenticatedUser } from '../../../services/authUser';
+import { useAnnouncements, useCreateAnnouncement, useDeleteAnnouncement } from '../../../hooks/index';
+import type { Announcement } from '../../../services/api';
+import { getSocket } from '../../../services/socket';
 
-type NoticeAudience = 'all' | 'student' | 'admin' | 'facilitator';
+type NoticeAudience = 'all' | 'student' | 'facilitator' | 'coordinator' | 'admin';
 type NoticePriority = 'normal' | 'high';
 
-type Notice = {
-  id: string;
-  title: string;
-  message: string;
-  audience: NoticeAudience;
-  priority: NoticePriority;
-  createdBy: string;
-  createdAt: string;
-};
-
-const NOTICE_KEY = 'nstp-system-notices';
-
-const DEFAULT_DEMO_NOTICES: Notice[] = [
-  {
-    id: 'notice-admin-001',
-    title: 'Welcome to BiPSU NSTP Academic Year 2025-2026',
-    message: 'The Office of the National Service Training Program welcomes all enrolled first-year students to the CWTS, LTS, and MTS components. Please check your assigned training groups and orientation schedule.',
-    audience: 'all',
-    priority: 'high',
-    createdBy: 'Dr. Reynold G. Bustillo (NSTP Director)',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 7).toISOString(),
-  },
-  {
-    id: 'notice-admin-002',
-    title: 'Facilitators Coordination Meeting & Immersion Briefing',
-    message: 'All designated CWTS and MTS facilitators are requested to attend the coordination meeting regarding municipal outreach deployment plans and CHED documentation standards.',
-    audience: 'facilitator',
-    priority: 'high',
-    createdBy: 'Dr. Reynold G. Bustillo (NSTP Director)',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 5).toISOString(),
-  },
-  {
-    id: 'notice-inst-001',
-    title: 'CWTS Field Immersion & First Aid Drill Preparation',
-    message: 'All CWTS Section 1A and 1B students are required to wear proper NSTP shirts and bring hydration bottles for this Saturday disaster risk simulation workshop.',
-    audience: 'student',
-    priority: 'normal',
-    createdBy: 'Engr. Juan Dela Cruz (CWTS Facilitator)',
-    createdAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 2).toISOString(),
-  },
-];
-
 export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser }) {
-  const [notices, setNotices] = useState<Notice[]>([]);
+  const queryClient = useQueryClient();
+  const { data: notices = [], isLoading } = useAnnouncements();
+  const createMutation = useCreateAnnouncement();
+  const deleteMutation = useDeleteAnnouncement();
+
   const [query, setQuery] = useState('');
   const [audienceFilter, setAudienceFilter] = useState<'all' | NoticeAudience>('all');
   const [title, setTitle] = useState('');
@@ -61,36 +28,39 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
   const [readIds, setReadIds] = useState<string[]>([]);
 
   useEffect(() => {
-    const rawNotices = localStorage.getItem(NOTICE_KEY);
-    const savedNotices = safeJsonParse<Notice[]>(rawNotices, []);
-    if (!savedNotices || savedNotices.length === 0) {
-      localStorage.setItem(NOTICE_KEY, JSON.stringify(DEFAULT_DEMO_NOTICES));
-      setNotices(DEFAULT_DEMO_NOTICES);
-    } else {
-      setNotices(savedNotices);
-    }
-
     const savedReads = safeJsonParse<string[]>(localStorage.getItem(readKey), []);
     setReadIds(savedReads || []);
   }, [readKey]);
 
-  const persistNotices = (next: Notice[]) => {
-    localStorage.setItem(NOTICE_KEY, JSON.stringify(next));
-    setNotices(next);
-  };
+  useEffect(() => {
+    const socket = getSocket();
+    const handleUpdate = () => {
+      queryClient.invalidateQueries({ queryKey: ['announcements'] });
+    };
+
+    socket.on('announcement:created', handleUpdate);
+    socket.on('announcement:deleted', handleUpdate);
+
+    return () => {
+      socket.off('announcement:created', handleUpdate);
+      socket.off('announcement:deleted', handleUpdate);
+    };
+  }, [queryClient]);
 
   const persistReads = (next: string[]) => {
     localStorage.setItem(readKey, JSON.stringify(next));
     setReadIds(next);
   };
 
-  const canPublish = user.role === 'admin' || user.role === 'facilitator';
+  const canPublish = user.role === 'admin' || user.role === 'coordinator' || user.role === 'facilitator';
+
+  const userRoleAudience = user.role;
 
   const visibleNotices = useMemo(() => {
     const lowered = query.trim().toLowerCase();
 
     return notices
-      .filter((notice) => notice.audience === 'all' || notice.audience === user.role)
+      .filter((notice) => notice.audience === 'all' || notice.audience === userRoleAudience || user.role === 'admin')
       .filter((notice) => (audienceFilter === 'all' ? true : notice.audience === audienceFilter))
       .filter((notice) => {
         if (!lowered) return true;
@@ -101,7 +71,7 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
         );
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [notices, user.role, audienceFilter, query]);
+  }, [notices, userRoleAudience, user.role, audienceFilter, query]);
 
   const unreadCount = visibleNotices.filter((notice) => !readIds.includes(notice.id)).length;
   const highPriorityCount = visibleNotices.filter((notice) => notice.priority === 'high').length;
@@ -116,26 +86,39 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
     persistReads(readIds.filter((id) => id !== noticeId));
   };
 
-  const publishNotice = () => {
+  const publishNotice = async () => {
     const cleanTitle = title.trim();
     const cleanMessage = message.trim();
-    if (!cleanTitle || !cleanMessage) return;
+    if (!cleanTitle || !cleanMessage) {
+      toast.error('Title and message cannot be empty.');
+      return;
+    }
 
-    const next: Notice = {
-      id: `notice-${Math.random().toString(36).slice(2, 10)}`,
-      title: cleanTitle,
-      message: cleanMessage,
-      audience,
-      priority,
-      createdBy: user.name || 'Staff',
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      await createMutation.mutateAsync({
+        title: cleanTitle,
+        message: cleanMessage,
+        audience,
+        priority,
+      });
+      setTitle('');
+      setMessage('');
+      setAudience('all');
+      setPriority('normal');
+      toast.success('Announcement published and broadcast live.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to publish announcement.');
+    }
+  };
 
-    persistNotices([next, ...notices]);
-    setTitle('');
-    setMessage('');
-    setAudience('all');
-    setPriority('normal');
+  const removeNotice = async (noticeId: string) => {
+    if (!window.confirm('Delete this announcement?')) return;
+    try {
+      await deleteMutation.mutateAsync(noticeId);
+      toast.success('Announcement removed.');
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Unable to delete announcement.');
+    }
   };
 
   return (
@@ -190,6 +173,7 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
                 <option value="all">All Roles</option>
                 <option value="student">Students</option>
                 <option value="facilitator">Facilitators</option>
+                <option value="coordinator">Coordinators</option>
                 {user.role === 'admin' && <option value="admin">Admins</option>}
               </select>
               <select
@@ -211,10 +195,11 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
           />
           <button
             onClick={publishNotice}
-            className="clickable-button mt-3 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white"
+            disabled={createMutation.isPending}
+            className="clickable-button mt-3 inline-flex items-center gap-2 rounded-xl bg-gradient-to-r from-blue-700 to-cyan-500 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
           >
             <Send className="w-4 h-4" />
-            Publish Notice
+            {createMutation.isPending ? 'Publishing...' : 'Publish Notice'}
           </button>
         </div>
       )}
@@ -238,20 +223,32 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
             <option value="all">All audiences</option>
             <option value="student">Student</option>
             <option value="facilitator">Facilitator</option>
+            <option value="coordinator">Coordinator</option>
             <option value="admin">Admin</option>
           </select>
         </div>
 
         <div className="space-y-3">
-          {visibleNotices.length === 0 ? (
+          {isLoading ? (
+            <div className="space-y-3">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="animate-pulse rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <div className="h-4 w-1/3 bg-slate-200 dark:bg-slate-700 rounded mb-2" />
+                  <div className="h-3 w-full bg-slate-200 dark:bg-slate-700 rounded mb-1" />
+                  <div className="h-3 w-2/3 bg-slate-200 dark:bg-slate-700 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : visibleNotices.length === 0 ? (
             <p className="text-sm text-slate-600 dark:text-slate-300">No announcements found.</p>
           ) : (
-            visibleNotices.map((notice) => {
+            visibleNotices.map((notice: Announcement) => {
               const isRead = readIds.includes(notice.id);
+              const canDelete = user.role === 'admin' || user.id === notice.createdById;
               return (
                 <div key={notice.id} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-950">
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="flex-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
                         <h4 className="font-semibold text-slate-900 dark:text-slate-100">{notice.title}</h4>
                         <span className={`posh-tag ${notice.priority === 'high' ? 'border-rose-200 bg-rose-100 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-200' : 'border-blue-200 bg-blue-100 text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/15 dark:text-blue-200'}`}>
@@ -261,18 +258,29 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
                           {notice.audience.toUpperCase()}
                         </span>
                       </div>
-                      <p className="text-sm text-slate-700 dark:text-slate-200">{notice.message}</p>
+                      <p className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-wrap">{notice.message}</p>
                       <p className="text-xs text-slate-500 mt-2 dark:text-slate-400">
                         {new Date(notice.createdAt).toLocaleString()} • {notice.createdBy}
                       </p>
                     </div>
-                    <button
-                      onClick={() => (isRead ? markUnread(notice.id) : markRead(notice.id))}
-                      className="clickable-button inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
-                    >
-                      {isRead ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <CircleAlert className="w-3.5 h-3.5 text-amber-600" />}
-                      {isRead ? 'Read' : 'Mark Read'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => (isRead ? markUnread(notice.id) : markRead(notice.id))}
+                        className="clickable-button inline-flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+                      >
+                        {isRead ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" /> : <CircleAlert className="w-3.5 h-3.5 text-amber-600" />}
+                        {isRead ? 'Read' : 'Mark Read'}
+                      </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => removeNotice(notice.id)}
+                          title="Delete announcement"
+                          className="clickable-button inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white p-1.5 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:border-rose-900/50 dark:bg-slate-900 dark:text-rose-300"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
               );
@@ -284,7 +292,7 @@ export default function AnnouncementsCenter({ user }: { user: AuthenticatedUser 
       <div className="bento-panel p-4">
         <div className="inline-flex items-center gap-2 text-sm text-slate-700 dark:text-slate-200">
           <Bell className="w-4 h-4 text-blue-700" />
-          Announcement state is saved in browser storage.
+          Announcements are synchronized in real-time with Neon PostgreSQL.
         </div>
       </div>
     </div>

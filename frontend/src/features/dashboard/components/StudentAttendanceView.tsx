@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { CalendarDays, CheckCircle2, Clock, XCircle, ArrowLeft } from 'lucide-react';
-import { loadAttendanceRecords, loadAttendanceSessions } from '../../../data/nstpData';
+import { useAttendanceRecords, useAttendanceSessions } from '../../../hooks/index';
 import type { AuthenticatedUser } from '../../../services/authUser';
 
 export default function StudentAttendanceView({
@@ -10,8 +10,8 @@ export default function StudentAttendanceView({
   user: AuthenticatedUser;
   onBack?: () => void;
 }) {
-  const sessions = useMemo(() => loadAttendanceSessions(), []);
-  const records = useMemo(() => loadAttendanceRecords(), []);
+  const { data: sessions = [] } = useAttendanceSessions();
+  const { data: records = [] } = useAttendanceRecords();
 
   const studentKey = ('studentId' in user ? (user as { studentId?: string }).studentId : null) || user.id;
   const myRecords = useMemo(

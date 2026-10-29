@@ -31,10 +31,10 @@ export default function PageHeader({
   const hasSearch = onSearchChange !== undefined;
 
   return (
-    <header className={`sticky top-0 z-20 border-b border-slate-200/80 bg-white/95 px-3 py-2.5 sm:px-5 sm:py-3.5 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}>
-      <div className="flex flex-col gap-2.5 lg:flex-row lg:items-center lg:justify-between">
+    <header className={`sticky top-0 z-20 w-full min-w-0 border-b border-slate-200/80 bg-white/95 px-4 sm:px-6 py-2.5 sm:py-3.5 backdrop-blur-md dark:border-slate-800 dark:bg-slate-900/95 ${className}`}>
+      <div className="flex w-full min-w-0 flex-wrap items-center justify-between gap-4">
         {/* Top bar on mobile / Left area on desktop */}
-        <div className="flex items-center justify-between gap-2 sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-center justify-between gap-2 sm:gap-3">
           <div className="flex min-w-0 items-center gap-2 sm:gap-3">
             {onMenuClick && (
               <button
@@ -71,10 +71,10 @@ export default function PageHeader({
           )}
         </div>
 
-        {/* Desktop actions + Mobile search row */}
-        <div className="flex min-w-0 items-center gap-2 sm:gap-3 lg:justify-end">
+        {/* Desktop actions + Search row */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:gap-3 lg:justify-end">
           {hasSearch && (
-            <div className="relative min-w-0 w-full lg:w-64 xl:w-72">
+            <div className="relative min-w-0 w-full sm:w-64 lg:w-80">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"

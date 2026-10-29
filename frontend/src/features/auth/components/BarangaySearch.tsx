@@ -1,19 +1,30 @@
 import { useState, useRef, useEffect } from 'react';
 import { searchBarangays, type Barangay } from '../../../services/api';
+import { getBuiltInBarangays } from '../../../data/addressData';
 
 interface BarangaySearchProps {
   municipalityCode: string;
+  municipalityName?: string;
   value: string;
   onChange: (value: string) => void;
   required?: boolean;
   disabled?: boolean;
 }
 
-export default function BarangaySearch({ municipalityCode, value, onChange, required, disabled }: BarangaySearchProps) {
+export default function BarangaySearch({
+  municipalityCode,
+  municipalityName,
+  value,
+  onChange,
+  required,
+  disabled,
+}: BarangaySearchProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState(value);
-  const [allBarangays, setAllBarangays] = useState<Barangay[]>([]);
-  const [filtered, setFiltered] = useState<Barangay[]>([]);
+  const lookupKey = municipalityCode || municipalityName || '';
+  const initialBuiltIn = lookupKey ? getBuiltInBarangays(lookupKey) : [];
+  const [allBarangays, setAllBarangays] = useState<Barangay[]>(initialBuiltIn);
+  const [filtered, setFiltered] = useState<Barangay[]>(initialBuiltIn);
   const [loading, setLoading] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -22,20 +33,37 @@ export default function BarangaySearch({ municipalityCode, value, onChange, requ
   }, [value]);
 
   useEffect(() => {
-    if (!municipalityCode) {
+    const key = municipalityCode || municipalityName;
+    if (!key) {
       setAllBarangays([]);
       setFiltered([]);
       return;
     }
-    setLoading(true);
-    searchBarangays(municipalityCode, '').then((res) => {
-      if (res.success) {
-        setAllBarangays(res.data);
-        setFiltered(res.data);
-      }
-      setLoading(false);
-    });
-  }, [municipalityCode]);
+
+    // Instantly load canonical built-in barangays (Zero Lockout)
+    const builtIn = getBuiltInBarangays(key);
+    if (builtIn.length > 0) {
+      setAllBarangays(builtIn);
+      setFiltered(builtIn);
+    }
+
+    if (municipalityCode) {
+      setLoading(true);
+      searchBarangays(municipalityCode, '')
+        .then((res) => {
+          if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+            setAllBarangays(res.data);
+            setFiltered(res.data);
+          }
+        })
+        .catch(() => {
+          // Gracefully keep builtIn barangays
+        })
+        .finally(() => {
+          setLoading(false);
+        });
+    }
+  }, [municipalityCode, municipalityName]);
 
   useEffect(() => {
     if (!query.trim()) {
@@ -62,6 +90,8 @@ export default function BarangaySearch({ municipalityCode, value, onChange, requ
     setOpen(false);
   };
 
+  const isInputDisabled = Boolean(disabled || (!municipalityCode && !municipalityName));
+
   return (
     <div ref={ref} className="relative">
       <label className="block">
@@ -76,22 +106,24 @@ export default function BarangaySearch({ municipalityCode, value, onChange, requ
             setOpen(true);
             if (!e.target.value) onChange('');
           }}
-          onFocus={() => { if (municipalityCode) setOpen(true); }}
-          placeholder={!municipalityCode ? 'Select a municipality first' : 'Search or select barangay...'}
+          onFocus={() => {
+            if (municipalityCode || municipalityName) setOpen(true);
+          }}
+          placeholder={isInputDisabled ? 'Select a municipality first' : 'Search or select barangay...'}
           required={required}
-          disabled={disabled || !municipalityCode}
+          disabled={isInputDisabled}
           className="w-full rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-950"
         />
       </label>
-      {open && municipalityCode && (
+      {open && (municipalityCode || municipalityName) && (
         <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-xl border border-blue-200 bg-white shadow-lg dark:border-slate-700 dark:bg-slate-900">
-          {loading && (
+          {loading && allBarangays.length === 0 && (
             <div className="px-4 py-3 text-sm text-slate-500">Loading barangays...</div>
           )}
           {!loading && filtered.length === 0 && (
             <div className="px-4 py-3 text-sm text-slate-500">No barangay found.</div>
           )}
-          {!loading && filtered.map((b) => (
+          {filtered.map((b) => (
             <button
               key={b.code}
               type="button"

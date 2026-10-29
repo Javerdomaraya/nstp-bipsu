@@ -28,6 +28,7 @@ import {
   MoonStar,
   PlayCircle,
   Settings,
+  Shield,
   ShieldCheck,
   Sparkles,
   Star,
@@ -37,13 +38,94 @@ import {
   X,
 } from 'lucide-react';
 import { Bar, BarChart, Cell, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis } from 'recharts';
-import { BIPSU_PROGRAMS, INDUSTRIAL_TECHNOLOGY_MAJORS, INDUSTRIAL_TECHNOLOGY_PROGRAM, SECONDARY_EDUCATION_MAJORS, SECONDARY_EDUCATION_PROGRAM, YEAR_LEVEL_OPTIONS } from '../../../data/nstpData';
+import {
+  BIPSU_PROGRAMS,
+  INDUSTRIAL_TECHNOLOGY_MAJORS,
+  INDUSTRIAL_TECHNOLOGY_PROGRAM,
+  SECONDARY_EDUCATION_MAJORS,
+  SECONDARY_EDUCATION_PROGRAM,
+  YEAR_LEVEL_OPTIONS,
+  isCriminologyProgram,
+  isTeacherEducationProgram,
+  isProgramWithMajor,
+} from '../../../data/nstpData';
 import splashImage from '../../../assets/images/splash.png';
+import nstpLogo from '../../../assets/nstp-logo.svg';
 import { apiPost } from '../../../services/apiClient';
 import { normalizeAuthenticatedUser, type AuthenticatedUser } from '../../../services/authUser';
 import { fetchProvinces, fetchMunicipalities, type Province, type Municipality } from '../../../services/api';
 import BarangaySearch from '../components/BarangaySearch';
-import { DEMO_ACCOUNTS, DEMO_PASSWORD, findDemoAccount } from '../../../data/demoAccounts';
+import { getBuiltInProvinces, getBuiltInMunicipalities } from '../../../data/addressData';
+
+export const SEEDED_PASSWORD = 'Password123!';
+
+export const COORDINATOR_ACCOUNTS = [
+  {
+    scope: 'CWTS',
+    label: 'CWTS',
+    identifier: 'coord.cwts@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    name: 'Prof. Maria Santos',
+    title: 'CWTS Component Coordinator',
+    badge: 'Track Overseer (CWTS)',
+    features: ['Manages CWTS & CWTS Coast Guard components across Biliran municipalities'],
+  },
+  {
+    scope: 'LTS',
+    label: 'LTS',
+    identifier: 'coord.lts@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    name: 'Prof. Elena Rivera',
+    title: 'LTS Component Coordinator',
+    badge: 'Track Overseer (LTS)',
+    features: ['Manages LTS Literacy Training Service for Biliran school communities'],
+  },
+  {
+    scope: 'MTS',
+    label: 'MTS / ROTC',
+    identifier: 'coord.mts@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    name: 'Maj. Roberto Garcia',
+    title: 'MTS / ROTC Component Coordinator',
+    badge: 'Track Overseer (MTS/ROTC)',
+    features: ['Manages MTS Army and MTS Navy tactical defense preparation units'],
+  },
+] as const;
+
+export const SEEDED_CREDENTIALS = {
+  admin: {
+    identifier: 'director@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    title: 'NSTP Director & Dean',
+    badge: 'Institutional Governor',
+    name: 'Dr. NSTP Director',
+    features: ['Institutional KPIs & Biliran Municipality Overview'],
+  },
+  coordinator: {
+    identifier: 'coord.cwts@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    title: 'CWTS Component Coordinator',
+    badge: 'Track Overseer (CWTS)',
+    name: 'Prof. Maria Santos',
+    features: ['Component KPIs & Student Distribution donut with accessible legend'],
+  },
+  facilitator: {
+    identifier: 'facilitator.naval@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    title: 'NSTP Senior Field Facilitator',
+    badge: 'Field Instructor (Naval & Almeria)',
+    name: 'Engr. Juan Dela Cruz',
+    features: ['Cohort KPIs: Total Students, Sessions Held, Attendance Today %, Cohort Progress %'],
+  },
+  student: {
+    identifier: 'student.naval1@bipsu.edu.ph',
+    password: SEEDED_PASSWORD,
+    title: 'BS in Computer Science (CWTS)',
+    badge: 'Enrolled Learner',
+    name: 'Javer Domaraya',
+    features: ['Enrolled track status, Module hours progress, and 1-tap shortcuts'],
+  },
+} as const;
 
 type LoginMode = 'login' | 'register';
 type PublicView = 'home' | 'nstp' | 'school' | 'portal' | 'feature' | 'preview';
@@ -235,6 +317,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [studentId, setStudentId] = useState('');
   const [school, setSchool] = useState('');
   const [degreeProgram, setDegreeProgram] = useState('');
+  const [preferredMtsBranch, setPreferredMtsBranch] = useState<'MTS (Army)' | 'MTS (Navy)'>('MTS (Army)');
   const [yearLevel, setYearLevel] = useState('');
   const [major, setMajor] = useState('');
   const [gender, setGender] = useState('');
@@ -244,14 +327,14 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [municipality, setMunicipality] = useState('');
   const [municipalityCode, setMunicipalityCode] = useState('');
   const [assignedMunicipality, setAssignedMunicipality] = useState('');
-  const [province, setProvince] = useState('');
-  const [provinces, setProvinces] = useState<Province[]>([]);
-  const [municipalities, setMunicipalities] = useState<Municipality[]>([]);
+  const [province, setProvince] = useState('Biliran');
+  const [provinces, setProvinces] = useState<Province[]>(() => getBuiltInProvinces());
+  const [municipalities, setMunicipalities] = useState<Municipality[]>(() => getBuiltInMunicipalities('Biliran'));
   const [provincesLoading, setProvincesLoading] = useState(false);
   const [provincialAddress, setProvincialAddress] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [email, setEmail] = useState(DEMO_ACCOUNTS.student.identifier);
-  const [password, setPassword] = useState(DEMO_PASSWORD);
+  const [email, setEmail] = useState<string>(SEEDED_CREDENTIALS.student.identifier);
+  const [password, setPassword] = useState<string>(SEEDED_PASSWORD);
   const [confirmPassword, setConfirmPassword] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -263,6 +346,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     if (typeof window === 'undefined') return 'light';
     return localStorage.getItem('nstp-theme') === 'dark' ? 'dark' : 'light';
   });
+  const [selectedCoordPillar, setSelectedCoordPillar] = useState<'CWTS' | 'LTS' | 'MTS'>('CWTS');
   const selectedSchoolPrograms = BIPSU_PROGRAMS.find((item) => item.school === school)?.programs || [];
 
   useEffect(() => {
@@ -308,10 +392,21 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   }, [showAuth, mobileMenuOpen]);
 
   useEffect(() => {
-    setProvincesLoading(true);
-    fetchProvinces().then((res) => {
-      if (res.success) setProvinces(res.data);
-    }).finally(() => setProvincesLoading(false));
+    fetchProvinces()
+      .then((res) => {
+        if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+          // Prioritize Biliran at index 0, followed alphabetically
+          const sorted = [...res.data].sort((a, b) => {
+            if (a.name === 'Biliran') return -1;
+            if (b.name === 'Biliran') return 1;
+            return a.name.localeCompare(b.name);
+          });
+          setProvinces(sorted);
+        }
+      })
+      .catch(() => {
+        // Fallback already active with built-in provinces
+      });
   }, []);
 
   useEffect(() => {
@@ -321,14 +416,22 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       setMunicipalityCode('');
       return;
     }
+    // Instantly switch to built-in municipalities for selected province (Zero wait/lockout!)
+    const builtIn = getBuiltInMunicipalities(province);
+    setMunicipalities(builtIn);
+
     const found = provinces.find((p) => p.name === province);
-    if (found) {
-      fetchMunicipalities(found.code).then((res) => {
-        if (res.success) setMunicipalities(res.data);
-      });
+    if (found && found.code) {
+      fetchMunicipalities(found.code)
+        .then((res) => {
+          if (res.success && Array.isArray(res.data) && res.data.length > 0) {
+            setMunicipalities(res.data);
+          }
+        })
+        .catch(() => {
+          // Fallback already active
+        });
     }
-    setMunicipality('');
-    setMunicipalityCode('');
   }, [province, provinces]);
 
   const showPublicView = (view: PublicView, featureLabel?: string, targetId = 'public-sections') => {
@@ -351,12 +454,93 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     showPublicView('preview', portalFeatures[0].label, 'overview-carousel');
   };
 
-  const selectDemoRole = (role: 'student' | 'facilitator' | 'coordinator' | 'admin') => {
+  const performLogin = async (loginIdentifier: string, loginPass: string, expectedRole?: string) => {
+    setError(null);
+    setNotice(null);
+
+    try {
+      // Real HTTP request to POST /auth/login
+      let apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>(
+        '/auth/login',
+        { identifier: loginIdentifier, password: loginPass },
+        null
+      );
+      if (apiResult === null) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>(
+          '/auth/login',
+          { identifier: loginIdentifier, password: loginPass },
+          null
+        );
+      }
+
+      if (apiResult?.success && apiResult?.data) {
+        const userData = apiResult.data.user;
+        const authenticatedUser = normalizeAuthenticatedUser(userData);
+        if (!authenticatedUser) {
+          setError('This account does not have a supported portal role. Ask an administrator to review the account.');
+          return;
+        }
+
+        const backendRole = authenticatedUser.role;
+        if (expectedRole && backendRole && backendRole !== expectedRole) {
+          setError(`This account is registered as "${backendRole}", not "${expectedRole}". Please select the correct role.`);
+          return;
+        }
+
+        setPassword('');
+        onLogin(authenticatedUser);
+        return;
+      }
+
+      if (apiResult === null) {
+        setError('Cannot reach the server. Please check your connection and try again.');
+        return;
+      }
+
+      if (apiResult && typeof apiResult === 'object' && 'success' in apiResult && !apiResult.success && 'error' in apiResult) {
+        setError((apiResult as any).error);
+        return;
+      }
+
+      setError(`Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`);
+    } catch (err: any) {
+      const msg = err?.payload?.error || err?.payload?.message || err?.message || `Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`;
+      setError(msg);
+    }
+  };
+
+  const selectCoordinatorPillar = (pillar: 'CWTS' | 'LTS' | 'MTS', autoLogin = false) => {
+    setSelectedCoordPillar(pillar);
+    const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === pillar);
+    if (found) {
+      setEmail(found.identifier);
+      setPassword(found.password);
+      if (autoLogin) {
+        void performLogin(found.identifier, found.password, 'coordinator');
+      }
+    }
+    setError(null);
+  };
+
+  const selectDemoRole = (role: 'student' | 'facilitator' | 'coordinator' | 'admin', autoLogin = false) => {
     setLoginRole(role);
-    const demo = DEMO_ACCOUNTS[role];
-    if (demo) {
-      setEmail(demo.identifier);
-      setPassword(DEMO_PASSWORD);
+    if (role === 'coordinator') {
+      const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0];
+      setEmail(found.identifier);
+      setPassword(found.password);
+      if (autoLogin) {
+        void performLogin(found.identifier, found.password, role);
+      }
+    } else {
+      const creds = SEEDED_CREDENTIALS[role];
+      if (creds) {
+        setEmail(creds.identifier);
+        setPassword(creds.password);
+        if (autoLogin) {
+          void performLogin(creds.identifier, creds.password, role);
+        }
+      }
     }
     setError(null);
   };
@@ -414,7 +598,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         return;
       }
 
-      if ((degreeProgram === INDUSTRIAL_TECHNOLOGY_PROGRAM || degreeProgram === SECONDARY_EDUCATION_PROGRAM) && !major) {
+      if (isProgramWithMajor(degreeProgram) && !major) {
         setError(`Major is required for ${degreeProgram}.`);
         return;
       }
@@ -452,7 +636,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         department: school,
         degreeProgram: degreeProgram.trim(),
         yearLevel,
-        ...((degreeProgram === INDUSTRIAL_TECHNOLOGY_PROGRAM || degreeProgram === SECONDARY_EDUCATION_PROGRAM) ? { major } : {}),
+        ...(isProgramWithMajor(degreeProgram) ? { major } : {}),
         gender,
         birthdate,
         houseStreetPurok: houseStreetPurok.trim(),
@@ -463,6 +647,11 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         currentAddress: buildCurrentAddress(houseStreetPurok, barangay, assignedMunicipality, province),
         provincialAddress: provincialAddress.trim(),
         contactNumber: contactNumber.trim(),
+        preferredComponent: isCriminologyProgram(degreeProgram, school)
+          ? preferredMtsBranch
+          : isTeacherEducationProgram(degreeProgram, school)
+          ? 'LTS'
+          : 'CWTS',
         createdAt: new Date().toISOString(),
       };
 
@@ -504,58 +693,12 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       return;
     }
 
-    const matchedDemo = findDemoAccount(loginInput, loginRole);
-
-    // Try backend login first (retry once if backend was restarting)
-    let apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>('/auth/login', { identifier: loginInput, password }, null);
-    if (apiResult === null && !matchedDemo) {
-      await new Promise((resolve) => setTimeout(resolve, 1500));
-      apiResult = await apiPost<{ success: boolean; data: { user: Record<string, any> } } | null>('/auth/login', { identifier: loginInput, password }, null);
+    try {
+      await performLogin(loginInput, password, loginRole);
+    } catch (err: any) {
+      const msg = err?.payload?.error || err?.payload?.message || err?.message || 'Failed to sign in. Please check your credentials.';
+      setError(msg);
     }
-    if (apiResult?.success && apiResult?.data) {
-      const userData = apiResult.data.user;
-      const authenticatedUser = normalizeAuthenticatedUser(userData);
-      if (!authenticatedUser) {
-        setError('This account does not have a supported portal role. Ask an administrator to review the account.');
-        return;
-      }
-
-      // Compare the canonical workspace role, not the raw database enum.
-      // Facilitators are stored as INSTRUCTOR on the backend, and comparing that
-      // raw value with the UI's `facilitator` option rejected valid accounts
-      // before the role alias normaliser could run.
-      const backendRole = authenticatedUser.role;
-      if (backendRole && backendRole !== loginRole) {
-        setError(`This account is registered as "${backendRole}", not "${loginRole}". Please select the correct role.`);
-        return;
-      }
-
-      setPassword('');
-      // Hand the whole payload to the canonical normaliser. Picking fields by
-      // hand here used to silently drop `coordinatorScope`, which left every
-      // coordinator falling back to CWTS in the dashboard.
-      onLogin(authenticatedUser);
-      return;
-    }
-
-    // Demo account instant fallback: ensures all 4 demo accounts always log in seamlessly
-    if (matchedDemo && password === DEMO_PASSWORD) {
-      setPassword('');
-      onLogin(matchedDemo);
-      return;
-    }
-
-    if (apiResult === null) {
-      setError('Cannot reach the server. Please check your connection and try again.');
-      return;
-    }
-
-    if (apiResult && typeof apiResult === 'object' && 'success' in apiResult && !apiResult.success && 'error' in apiResult) {
-      setError((apiResult as any).error);
-      return;
-    }
-
-    setError(`Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`);
   };
 
   return (
@@ -810,7 +953,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                 <div className="relative">
                   <div className="mb-6 flex items-center gap-3">
                     <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-16 w-16 rounded-2xl bg-white p-2" />
-                    <img src="/nstp-logo.svg" alt="NSTP logo" className="h-16 w-16 rounded-2xl bg-white p-2" />
+                    <img src={nstpLogo} alt="NSTP logo" className="h-16 w-16 rounded-2xl bg-white p-2" />
                   </div>
                   <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-100">Official BiPSU NSTP Portal</p>
                   <h2 className="mt-2 text-3xl font-semibold">Secure access for enrollment, learning records, and NSTP administration.</h2>
@@ -830,7 +973,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                   <div className="min-w-0">
                     <div className="mb-2.5 flex items-center gap-2 lg:hidden">
                       <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
-                      <img src="/nstp-logo.svg" alt="NSTP logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
+                      <img src={nstpLogo} alt="NSTP logo" className="h-9 w-9 rounded-xl border border-blue-100 bg-white p-1" />
                     </div>
                     <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Portal Access</p>
                     <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100 sm:text-2xl">{mode === 'login' ? 'Sign in to continue' : 'Request student access'}</h2>
@@ -901,13 +1044,45 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           value={degreeProgram}
                           onChange={(value) => {
                             setDegreeProgram(value);
-                            if (value !== INDUSTRIAL_TECHNOLOGY_PROGRAM && value !== SECONDARY_EDUCATION_PROGRAM) setMajor('');
+                            if (!isProgramWithMajor(value)) setMajor('');
                           }}
                           required
                           options={selectedSchoolPrograms}
                           placeholder={school ? 'Select your degree program' : 'Select a school first'}
                           disabled={!school}
                         />
+
+                        {degreeProgram && isCriminologyProgram(degreeProgram, school) && (
+                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                            <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200 mb-1">
+                              <Shield className="w-4 h-4 text-amber-600" />
+                              <span>Mandatory Track Routing: Military Training Service (MTS / ROTC)</span>
+                            </div>
+                            <p className="mb-2.5 text-slate-700 dark:text-slate-300">
+                              Students in the School of Criminal Justice Education (BS in Criminology) are automatically routed to the Military Training Service (ROTC) track. Please select your service branch:
+                            </p>
+                            <SelectField
+                              label="MTS Service Branch"
+                              value={preferredMtsBranch}
+                              onChange={(val) => setPreferredMtsBranch(val as 'MTS (Army)' | 'MTS (Navy)')}
+                              required
+                              options={['MTS (Army)', 'MTS (Navy)']}
+                              placeholder="Select military branch"
+                            />
+                          </div>
+                        )}
+
+                        {degreeProgram && isTeacherEducationProgram(degreeProgram, school) && (
+                          <div className="rounded-xl border border-blue-300 bg-blue-50 p-3.5 text-xs text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+                            <div className="flex items-center gap-1.5 font-semibold text-blue-800 dark:text-blue-200 mb-1">
+                              <Shield className="w-4 h-4 text-blue-600" />
+                              <span>Mandatory Track Routing: Literacy Training Service (LTS)</span>
+                            </div>
+                            <p className="text-slate-700 dark:text-slate-300">
+                              Students in the School of Teacher Education are automatically routed to the Literacy Training Service (LTS) to prepare for specialized community literacy and numeracy tutorials in Biliran schools.
+                            </p>
+                          </div>
+                        )}
                         <SelectField
                           label="Year Level"
                           value={yearLevel}
@@ -916,7 +1091,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           options={YEAR_LEVEL_OPTIONS}
                           placeholder="Select year level"
                         />
-                        {(degreeProgram === INDUSTRIAL_TECHNOLOGY_PROGRAM || degreeProgram === SECONDARY_EDUCATION_PROGRAM) && (
+                        {isProgramWithMajor(degreeProgram) && (
                           <SelectField
                             label="Major"
                             value={major}
@@ -941,12 +1116,17 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         <SelectField
                           label="Province"
                           value={province}
-                          onChange={(value) => { setProvince(value); }}
+                          onChange={(value) => {
+                            setProvince(value);
+                            setMunicipality('');
+                            setMunicipalityCode('');
+                            setBarangay('');
+                          }}
                           required
                           options={provinces.map((p) => p.name)}
-                          placeholder={provincesLoading ? 'Loading provinces...' : provinces.length === 0 ? 'Address data not yet loaded' : 'Select province'}
-                          disabled={provinces.length === 0 && !provincesLoading}
-                          helper={provinces.length === 0 && !provincesLoading ? 'The address database is still being populated. Please try again later or contact the administrator.' : 'Select your home province.'}
+                          placeholder="Select province"
+                          disabled={false}
+                          helper="Select your home province (Biliran prioritized)."
                         />
                         <SelectField
                           label="Municipality"
@@ -955,14 +1135,17 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                             setMunicipality(value);
                             const found = municipalities.find((m) => m.name === value);
                             setMunicipalityCode(found ? found.code : '');
+                            setBarangay('');
                           }}
                           required
                           options={municipalities.map((m) => m.name)}
                           placeholder={!province ? 'Select a province first' : 'Select municipality'}
-                          helper="Your home municipality."
+                          disabled={!province}
+                          helper={province === 'Biliran' ? 'Select your Biliran municipality (determines NSTP field assignment).' : 'Your home municipality.'}
                         />
                         <BarangaySearch
                           municipalityCode={municipalityCode}
+                          municipalityName={municipality}
                           value={barangay}
                           onChange={setBarangay}
                           required
@@ -1007,29 +1190,75 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         ))}
                       </div>
 
-                      {/* Demo Account Indicator Card */}
-                      <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/60 p-3.5 text-left dark:border-blue-900/50 dark:from-blue-950/40 dark:to-indigo-950/30">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-900 dark:text-blue-200">
-                            <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                            {DEMO_ACCOUNTS[loginRole].title}
-                          </span>
-                          <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
-                            {DEMO_ACCOUNTS[loginRole].badge}
-                          </span>
+                      {loginRole === 'coordinator' && (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Pillar:</span>
+                          {COORDINATOR_ACCOUNTS.map((c) => (
+                            <button
+                              key={c.scope}
+                              type="button"
+                              onClick={() => selectCoordinatorPillar(c.scope)}
+                              className={`flex-1 rounded-lg px-2 py-1 text-center text-xs font-bold transition-colors ${
+                                selectedCoordPillar === c.scope
+                                  ? 'bg-blue-700 text-white shadow-xs'
+                                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                              }`}
+                            >
+                              {c.label}
+                            </button>
+                          ))}
                         </div>
-                        <div className="mt-1.5 flex items-center justify-between">
-                          <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                            Account: <span className="font-semibold text-slate-900 dark:text-white">{DEMO_ACCOUNTS[loginRole].name}</span>
-                          </p>
-                          <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
-                            PW: {DEMO_PASSWORD}
-                          </span>
-                        </div>
-                        <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
-                          {DEMO_ACCOUNTS[loginRole].features[0]}
-                        </p>
-                      </div>
+                      )}
+
+                      {/* Seeded Account Indicator Card */}
+                      {(() => {
+                        const activeCreds = loginRole === 'coordinator'
+                          ? (COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0])
+                          : SEEDED_CREDENTIALS[loginRole];
+
+                        return (
+                          <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/60 p-3.5 text-left dark:border-blue-900/50 dark:from-blue-950/40 dark:to-indigo-950/30">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-900 dark:text-blue-200">
+                                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
+                                {activeCreds.title}
+                              </span>
+                              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
+                                {activeCreds.badge}
+                              </span>
+                            </div>
+                            <div className="mt-1.5 flex items-center justify-between">
+                              <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
+                                Account: <span className="font-semibold text-slate-900 dark:text-white">{activeCreds.name}</span>
+                              </p>
+                              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                                PW: {SEEDED_PASSWORD}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
+                              {activeCreds.features[0]}
+                            </p>
+                            {import.meta.env.DEV && (
+                              <div className="mt-2.5 pt-2 border-t border-blue-200/60 dark:border-blue-900/40">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (loginRole === 'coordinator') {
+                                      selectCoordinatorPillar(selectedCoordPillar, true);
+                                    } else {
+                                      selectDemoRole(loginRole, true);
+                                    }
+                                  }}
+                                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-200"
+                                >
+                                  <Sparkles className="h-3 w-3 text-amber-500" />
+                                  Quick Login as {activeCreds.name} (via POST /auth/login)
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       <Field
                         label={loginRole === 'student' ? 'Student ID' : 'Email'}

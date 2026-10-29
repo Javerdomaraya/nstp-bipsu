@@ -49,9 +49,9 @@ export default function RoleShell({
   }, [themeMode]);
 
   return (
-    <div className="min-h-screen bg-[#eef4fb] text-slate-900 dark:bg-[#0b1426] dark:text-slate-100">
-      <div className="min-h-screen flex flex-col lg:flex-row p-2 md:p-3 gap-2 md:gap-3">
-        <aside className="lg:w-80 xl:w-88 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-950/75 md:p-4">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-[#eef4fb] text-slate-900 dark:bg-[#0b1426] dark:text-slate-100">
+      <div className="min-h-screen w-full max-w-full flex flex-col lg:flex-row p-2 md:p-3 gap-2 md:gap-3 overflow-x-hidden">
+        <aside className="lg:w-80 xl:w-88 shrink-0 overflow-hidden rounded-2xl border border-slate-200/80 bg-white/90 p-3 shadow-sm dark:border-slate-700 dark:bg-slate-950/75 md:p-4">
           <div className="flex items-center justify-between mb-4 gap-3">
             <div className="flex items-center gap-3">
               <div className="h-12 w-12 overflow-hidden rounded-2xl border border-blue-200 bg-white p-1 shadow-sm dark:border-slate-700 dark:bg-slate-900">
@@ -111,7 +111,7 @@ export default function RoleShell({
           </div>
         </aside>
 
-        <main className="flex-1 min-h-0 overflow-hidden">
+        <main className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden">
           <div className="size-full rounded-xl border border-slate-200/80 bg-white/75 shadow-[0_20px_60px_-32px_rgba(15,23,42,0.35)] overflow-hidden dark:border-slate-700 dark:bg-slate-950/70 dark:shadow-[0_20px_60px_-32px_rgba(2,6,23,0.8)]">
             <div className="flex flex-col gap-3 border-b border-slate-200/80 bg-white px-4 py-4 dark:border-slate-700 dark:bg-slate-900 md:flex-row md:items-center md:justify-between md:px-6">
               <div>
@@ -123,7 +123,7 @@ export default function RoleShell({
               </p>
             </div>
 
-            <div className="h-full overflow-auto p-3 md:p-4">
+            <div className="h-full overflow-auto p-4 sm:p-6 lg:p-8">
               {children}
             </div>
           </div>

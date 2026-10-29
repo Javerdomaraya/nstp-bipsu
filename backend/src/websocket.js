@@ -116,3 +116,8 @@ export function emitToRoom(socketServer, room, event, payload) {
   if (!socketServer) return;
   socketServer.to(room).emit(event, payload);
 }
+
+export function broadcastAnnouncement(event, payload) {
+  if (!io) return;
+  io.sockets.emit(event, payload);
+}

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Pencil, Trash2, Save, Eye, EyeOff, UserPlus, BookOpen, Clock3, MessageSquareText, ChevronUp, ChevronDown, LayoutPanelLeft, Sparkles } from 'lucide-react';
-import { createEmptyAssessment, loadAccounts, replaceAssessmentsSnapshot, type AssessmentOwner, NstpAccount, NstpAssessment, NstpModule, NstpQuestion } from '../../../data/nstpData';
+import { createEmptyAssessment, type AssessmentOwner, NstpAccount, NstpAssessment, NstpModule, NstpQuestion } from '../../../data/nstpData';
 import { fetchManagedModules } from '../../../services/modules';
+import { fetchAccounts } from '../../../services/api';
 import {
   createManagedAssessment, fetchAssessmentAttempts, fetchManagedAssessments,
   overrideAssessmentAttempt, removeManagedAssessment, updateManagedAssessment,
@@ -67,12 +68,11 @@ export default function AssessmentManager({ user, role }: Props) {
     // The accounts snapshot is admin-populated and is only used by the
     // administrator's "Assign Facilitator Owner" picker below, so no other role
     // reads it.
-    if (role === 'admin') setAccounts(loadAccounts());
+    if (role === 'admin') fetchAccounts().then(setAccounts).catch(() => setAccounts([]));
     else setAccounts([]);
     Promise.all([fetchManagedAssessments(role), fetchManagedModules(role)])
       .then(([items, moduleRows]) => {
         setAssessments(items);
-        if (!isComponentScoped) replaceAssessmentsSnapshot(items);
         setModules(moduleRows.filter((module) => module.status !== 'ARCHIVED'));
         if (items.length > 0) setGlobalPassingScore(items[0].passingScore);
         setError(null);
@@ -95,7 +95,6 @@ export default function AssessmentManager({ user, role }: Props) {
         ? assessments.map((item) => (item.id === saved.id ? saved : item))
         : [saved, ...assessments];
       setAssessments(nextList);
-      if (!isComponentScoped) replaceAssessmentsSnapshot(nextList);
       setEditingId(null);
       setForm(null);
       setError(null);
@@ -124,7 +123,6 @@ export default function AssessmentManager({ user, role }: Props) {
         ? assessments.map((item) => item.id === assessmentId ? { ...item, status: 'archived' as const } : item)
         : assessments.filter((item) => item.id !== assessmentId);
       setAssessments(nextList);
-      if (!isComponentScoped) replaceAssessmentsSnapshot(nextList);
       if (editingId === assessmentId) { setEditingId(null); setForm(null); }
       setError(null);
     } catch (requestError) {
@@ -188,7 +186,6 @@ export default function AssessmentManager({ user, role }: Props) {
       const savedEditable = await Promise.all(editableAssessments.map((assessment) => updateManagedAssessment(role, assessment)));
       const saved = nextAssessments.map((assessment) => savedEditable.find((item) => item.id === assessment.id) || assessment);
       setAssessments(saved);
-      if (!isComponentScoped) replaceAssessmentsSnapshot(saved);
       setAttempts((current) => current.map((attempt) => {
         const assessment = saved.find((item) => item.id === attempt.assessmentId);
         return assessment && !attempt.manualStatus ? { ...attempt, passed: attempt.score >= assessment.passingScore } : attempt;

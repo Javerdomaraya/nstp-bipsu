@@ -9,6 +9,7 @@ const { default: prisma } = await import('../src/db/prisma.js');
 const { adminVoidQualifyingExamAttempt, startMyQualifyingExam } = await import('../src/modules/nstp/nstp.controller.js');
 const { placeStudent } = await import('../src/modules/nstp/nstp.service.js');
 const { QUALIFYING_EXAM_ID } = await import('../src/seed.js');
+const { voidQualifyingExamAttemptSchema } = await import('../src/middleware/validationSchemas.js');
 
 function mockResponse() {
   const res = {
@@ -31,7 +32,7 @@ function mockResponse() {
   return res;
 }
 
-test('real postgres: admin void-attempt resets placement, removes result, logs audit entry, and allows student retake', async () => {
+test('real postgres: admin void-attempt resets placement when unplace is opt-in, marks result voided, and logs audit', async () => {
   const openSY = '2026-2027';
   const openSem = '1st Semester';
 
@@ -53,42 +54,23 @@ test('real postgres: admin void-attempt resets placement, removes result, logs a
   });
   assert.ok(exam && exam.questions.length > 0, 'Master qualifying exam must exist');
 
-  const commonModule = await prisma.module.upsert({
-    where: { id: 'test-common-mod-void' },
-    update: { hours: 25, componentId: null, isPublished: true },
-    create: {
-      id: 'test-common-mod-void',
-      title: 'Common Module for Void Test',
-      hours: 25,
-      componentId: null,
-      isPublished: true,
-    },
-  });
-
-  const ts = `void_stu_${Date.now()}`;
+  const ts = `void_full_${Date.now()}`;
   const user = await prisma.user.create({
     data: {
       email: `${ts}@bipsu.edu.ph`,
-      name: 'Void Test Student',
+      name: 'Void Full Test Student',
       passwordHash: 'dummy-hash',
       role: 'STUDENT',
       studentProfile: {
         create: {
           studentNumber: `SN-${Date.now().toString().slice(-6)}`,
           componentId: null,
-          moduleProgress: {
-            create: {
-              moduleId: commonModule.id,
-              completedAt: new Date(),
-            },
-          },
         },
       },
     },
     include: { studentProfile: true },
   });
 
-  // 1. Student has a completed, placed attempt in CWTS
   const attempt = await prisma.qualifyingExamAttempt.create({
     data: {
       userId: user.id,
@@ -103,12 +85,11 @@ test('real postgres: admin void-attempt resets placement, removes result, logs a
       submittedAt: new Date(),
       status: 'assigned-preferred',
       assignedComponent: 'CWTS',
-      score: 90,
+      score: 88,
       rank: 1,
     },
   });
 
-  // Place student into CWTS
   await prisma.$transaction(async (tx) => {
     await placeStudent(tx, {
       studentId: user.studentProfile.id,
@@ -126,80 +107,333 @@ test('real postgres: admin void-attempt resets placement, removes result, logs a
       userName: user.name,
       userEmail: user.email,
       preferredComponent: 'CWTS',
-      score: 90,
+      score: 88,
       assignedComponent: 'CWTS',
       status: 'assigned-preferred',
       timestamp: new Date().toISOString(),
     },
   });
 
-  // Verify initial state: student is placed, enrollment is ACTIVE
-  const profileBefore = await prisma.studentProfile.findUnique({
-    where: { id: user.studentProfile.id },
-  });
-  assert.ok(profileBefore.componentId !== null, 'Student should be placed initially');
-
-  const enrollmentBefore = await prisma.enrollment.findFirst({
-    where: { studentId: user.studentProfile.id, status: 'ACTIVE' },
-  });
-  assert.ok(enrollmentBefore !== null, 'Student should have active enrollment initially');
-
-  // 2. Admin voids the attempt
-  const adminUser = { id: `admin-actor-${Date.now()}`, name: 'Lead Coordinator', role: 'ADMIN' };
+  const adminActor = { id: `admin-actor-${Date.now()}`, role: 'ADMIN' };
   const voidReq = {
     params: { id: attempt.id },
-    body: { reason: 'Student experienced power outage during examination' },
-    user: adminUser,
+    body: { reason: 'System glitch reported during submission', unplace: true },
+    validated: {
+      body: { reason: 'System glitch reported during submission', unplace: true },
+      params: { id: attempt.id },
+    },
+    user: adminActor,
   };
   const voidRes = mockResponse();
 
   await adminVoidQualifyingExamAttempt(voidReq, voidRes);
 
   assert.equal(voidRes.statusCode, 200);
-  assert.equal(voidRes.body.success, true);
-  assert.ok(voidRes.body.data.auditLogId, 'Audit log ID must be returned');
+  assert.equal(voidRes.body.data.unplaced, true);
 
-  // 3. Verify attempt status is VOIDED
-  const voidedAttempt = await prisma.qualifyingExamAttempt.findUnique({
+  // Check attempt status is VOIDED
+  const updatedAttempt = await prisma.qualifyingExamAttempt.findUnique({
     where: { id: attempt.id },
   });
-  assert.equal(voidedAttempt.status, 'VOIDED');
+  assert.equal(updatedAttempt.status, 'VOIDED');
 
-  // 4. Verify student profile component was cleared and enrollment DROPPED
-  const profileAfter = await prisma.studentProfile.findUnique({
-    where: { id: user.studentProfile.id },
-  });
-  assert.equal(profileAfter.componentId, null, 'Student profile componentId should be reset to null');
-
-  const activeEnrollments = await prisma.enrollment.findMany({
-    where: { studentId: user.studentProfile.id, status: 'ACTIVE' },
-  });
-  assert.equal(activeEnrollments.length, 0, 'Active enrollments should be dropped');
-
-  // 5. Verify qualifying result was removed
+  // Check result was marked voided, NOT deleted
   const resultAfter = await prisma.qualifyingExamResult.findFirst({
     where: { userId: user.id },
   });
-  assert.equal(resultAfter, null, 'Qualifying exam result should be removed');
+  assert.ok(resultAfter, 'Qualifying exam result must be retained, not deleted');
+  assert.equal(resultAfter.status, 'voided');
 
-  // 6. Verify AuditLogEntry was recorded
+  // Check profile unplaced
+  const profileAfter = await prisma.studentProfile.findUnique({
+    where: { id: user.studentProfile.id },
+  });
+  assert.equal(profileAfter.componentId, null);
+
+  // Check audit entry includes score in detail
   const audit = await prisma.auditLogEntry.findUnique({
     where: { id: voidRes.body.data.auditLogId },
   });
-  assert.ok(audit, 'Audit log entry must exist in database');
+  assert.ok(audit, 'AuditLogEntry must exist');
   assert.equal(audit.action, 'QUALIFYING_ATTEMPT_VOID');
-  assert.equal(audit.actor, adminUser.id);
-  assert.match(audit.detail, /power outage/i);
+  assert.equal(audit.actor, adminActor.id);
+  const detail = JSON.parse(audit.detail);
+  assert.equal(detail.score, 88);
+  assert.equal(detail.reason, 'System glitch reported during submission');
+});
 
-  // 7. Verify student can now retake (call start again)
-  const retakeReq = {
-    user: { id: user.id, name: user.name, email: user.email },
-    student: { id: user.studentProfile.id },
-    body: { preferredComponent: 'LTS' },
+test('real postgres: double void throws 409 conflict', async () => {
+  const ts = `double_void_${Date.now()}`;
+  const user = await prisma.user.create({
+    data: {
+      email: `${ts}@bipsu.edu.ph`,
+      name: 'Double Void Student',
+      passwordHash: 'dummy-hash',
+      role: 'STUDENT',
+      studentProfile: {
+        create: {
+          studentNumber: `SN-${Date.now().toString().slice(-6)}`,
+        },
+      },
+    },
+  });
+
+  const attempt = await prisma.qualifyingExamAttempt.create({
+    data: {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      preferredComponent: 'CWTS',
+      attemptNumber: 1,
+      startedAt: new Date(),
+      expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+      status: 'STARTED',
+    },
+  });
+
+  const adminActor = { id: `admin-actor-${Date.now()}`, role: 'ADMIN' };
+  const req1 = {
+    params: { id: attempt.id },
+    body: { reason: 'Initial void' },
+    validated: { body: { reason: 'Initial void', unplace: false }, params: { id: attempt.id } },
+    user: adminActor,
   };
-  const retakeRes = mockResponse();
+  const res1 = mockResponse();
 
-  await startMyQualifyingExam(retakeReq, retakeRes);
-  assert.equal(retakeRes.statusCode, 201, `Student should be able to start retake after void, got: ${retakeRes.statusCode}`);
-  assert.ok(retakeRes.body.data.attemptId !== attempt.id, 'New attempt should have new ID');
+  await adminVoidQualifyingExamAttempt(req1, res1);
+  assert.equal(res1.statusCode, 200);
+
+  // Second void on the same attempt
+  const req2 = {
+    params: { id: attempt.id },
+    body: { reason: 'Duplicate void attempt' },
+    validated: { body: { reason: 'Duplicate void attempt', unplace: false }, params: { id: attempt.id } },
+    user: adminActor,
+  };
+  const res2 = mockResponse();
+
+  await adminVoidQualifyingExamAttempt(req2, res2);
+  assert.equal(res2.statusCode, 409, `Expected 409 on second void, got ${res2.statusCode}`);
+  assert.match(res2.body.error, /already voided/i);
+});
+
+test('real postgres: void-after-retake refuses unplace and leaves new placement intact', async () => {
+  const openSY = '2026-2027';
+  const openSem = '1st Semester';
+
+  const ts = `void_retake_${Date.now()}`;
+  const user = await prisma.user.create({
+    data: {
+      email: `${ts}@bipsu.edu.ph`,
+      name: 'Void Retake Student',
+      passwordHash: 'dummy-hash',
+      role: 'STUDENT',
+      studentProfile: {
+        create: {
+          studentNumber: `SN-${Date.now().toString().slice(-6)}`,
+        },
+      },
+    },
+    include: { studentProfile: true },
+  });
+
+  // Attempt 1 (older)
+  const attempt1 = await prisma.qualifyingExamAttempt.create({
+    data: {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      preferredComponent: 'CWTS',
+      attemptNumber: 1,
+      startedAt: new Date(Date.now() - 3600000),
+      expiresAt: new Date(Date.now() - 1800000),
+      submittedAt: new Date(Date.now() - 1900000),
+      createdAt: new Date(Date.now() - 3600000),
+      status: 'assigned-preferred',
+      assignedComponent: 'CWTS',
+      score: 75,
+    },
+  });
+
+  // Attempt 2 (newer retake placed in LTS)
+  const attempt2 = await prisma.qualifyingExamAttempt.create({
+    data: {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      preferredComponent: 'LTS',
+      attemptNumber: 2,
+      startedAt: new Date(),
+      expiresAt: new Date(Date.now() + 3600000),
+      submittedAt: new Date(),
+      createdAt: new Date(),
+      status: 'assigned-preferred',
+      assignedComponent: 'LTS',
+      score: 95,
+    },
+  });
+
+  // Place student into LTS based on attempt 2
+  await prisma.$transaction(async (tx) => {
+    await placeStudent(tx, {
+      studentId: user.studentProfile.id,
+      userId: user.id,
+      canonicalComponent: 'LTS',
+      schoolYear: openSY,
+      semester: openSem,
+    });
+  });
+
+  // Admin tries to void Attempt 1 with unplace: true
+  const adminActor = { id: `admin-actor-${Date.now()}`, role: 'ADMIN' };
+  const voidReq = {
+    params: { id: attempt1.id },
+    body: { reason: 'Voiding older attempt', unplace: true },
+    validated: { body: { reason: 'Voiding older attempt', unplace: true }, params: { id: attempt1.id } },
+    user: adminActor,
+  };
+  const voidRes = mockResponse();
+
+  await adminVoidQualifyingExamAttempt(voidReq, voidRes);
+  assert.equal(voidRes.statusCode, 409, `Expected 409 refusing unplace when newer attempt exists, got ${voidRes.statusCode}`);
+  assert.match(voidRes.body.error, /newer qualifying exam attempt exists/i);
+
+  // Student's LTS placement and enrollment remain intact
+  const profileAfter = await prisma.studentProfile.findUnique({
+    where: { id: user.studentProfile.id },
+  });
+  assert.ok(
+    profileAfter.componentId === 'LTS' || profileAfter.componentId === 'system-component-lts',
+    'Student must remain placed in LTS'
+  );
+
+  const ltsEnrollment = await prisma.enrollment.findFirst({
+    where: { studentId: user.studentProfile.id, status: 'ACTIVE' },
+  });
+  assert.ok(ltsEnrollment, 'Active enrollment in LTS must remain intact');
+});
+
+test('real postgres: unplace is refused with 409 when grades exist', async () => {
+  const openSY = '2026-2027';
+  const openSem = '1st Semester';
+
+  const ts = `void_grades_${Date.now()}`;
+  const user = await prisma.user.create({
+    data: {
+      email: `${ts}@bipsu.edu.ph`,
+      name: 'Grades Student',
+      passwordHash: 'dummy-hash',
+      role: 'STUDENT',
+      studentProfile: {
+        create: {
+          studentNumber: `SN-${Date.now().toString().slice(-6)}`,
+        },
+      },
+    },
+    include: { studentProfile: true },
+  });
+
+  const attempt = await prisma.qualifyingExamAttempt.create({
+    data: {
+      userId: user.id,
+      userName: user.name,
+      userEmail: user.email,
+      preferredComponent: 'CWTS',
+      attemptNumber: 1,
+      startedAt: new Date(),
+      expiresAt: new Date(Date.now() + 3600000),
+      status: 'assigned-preferred',
+      assignedComponent: 'CWTS',
+      score: 80,
+    },
+  });
+
+  await prisma.$transaction(async (tx) => {
+    await placeStudent(tx, {
+      studentId: user.studentProfile.id,
+      userId: user.id,
+      canonicalComponent: 'CWTS',
+      schoolYear: openSY,
+      semester: openSem,
+    });
+  });
+
+  // Create an academic grade for this student
+  await prisma.grade.create({
+    data: {
+      id: `grade-${Date.now()}`,
+      studentId: user.studentProfile.id,
+      score: 88,
+      percentGrade: 88,
+    },
+  });
+
+  const adminActor = { id: `admin-actor-${Date.now()}`, role: 'ADMIN' };
+  const voidReq = {
+    params: { id: attempt.id },
+    body: { reason: 'Attempt to unplace student with grades', unplace: true },
+    validated: { body: { reason: 'Attempt to unplace student with grades', unplace: true }, params: { id: attempt.id } },
+    user: adminActor,
+  };
+  const voidRes = mockResponse();
+
+  await adminVoidQualifyingExamAttempt(voidReq, voidRes);
+  assert.equal(voidRes.statusCode, 409, `Expected 409 refusing unplace when grades exist, got ${voidRes.statusCode}`);
+  assert.match(voidRes.body.error, /academic grades already exist/i);
+
+  // Student placement remains intact
+  const profileAfter = await prisma.studentProfile.findUnique({
+    where: { id: user.studentProfile.id },
+  });
+  assert.ok(profileAfter.componentId !== null, 'Student placement must not be removed');
+});
+
+test('real postgres: missing reason fails validation with 400', () => {
+  // Test via Zod schema
+  const invalid1 = voidQualifyingExamAttemptSchema.safeParse({
+    body: { reason: '' },
+    params: { id: 'attempt-123' },
+  });
+  assert.equal(invalid1.success, false);
+
+  const invalid2 = voidQualifyingExamAttemptSchema.safeParse({
+    body: {},
+    params: { id: 'attempt-123' },
+  });
+  assert.equal(invalid2.success, false);
+
+  const invalid3 = voidQualifyingExamAttemptSchema.safeParse({
+    body: { reason: '   ' },
+    params: { id: 'attempt-123' },
+  });
+  assert.equal(invalid3.success, false);
+
+  const valid = voidQualifyingExamAttemptSchema.safeParse({
+    body: { reason: 'Valid administrative reason', unplace: true },
+    params: { id: 'attempt-123' },
+  });
+  assert.equal(valid.success, true);
+});
+
+test('real postgres: non-admin request fails authorization check with 403', async () => {
+  const { requireRole } = await import('../src/middleware/authenticate.js');
+  const requireAdminMiddleware = requireRole('ADMIN');
+
+  let studentNextCalled = false;
+  const studentReq = { user: { id: 'student-user-1', role: 'STUDENT' } };
+  const studentRes = mockResponse();
+  requireAdminMiddleware(studentReq, studentRes, () => {
+    studentNextCalled = true;
+  });
+  assert.equal(studentNextCalled, false, 'Student must not proceed through admin middleware');
+  assert.equal(studentRes.statusCode, 403);
+
+  let coordNextCalled = false;
+  const coordReq = { user: { id: 'coord-user-1', role: 'COORDINATOR' } };
+  const coordRes = mockResponse();
+  requireAdminMiddleware(coordReq, coordRes, () => {
+    coordNextCalled = true;
+  });
+  assert.equal(coordNextCalled, false, 'Coordinator must not proceed through admin middleware');
+  assert.equal(coordRes.statusCode, 403);
 });

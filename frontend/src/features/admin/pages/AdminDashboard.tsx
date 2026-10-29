@@ -8,10 +8,25 @@ import ModulesPage from '../../../pages/ModulesPage';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import StudentProfileModal from '../components/StudentProfileModal';
 import AdminGradesView from '../components/AdminGradesView';
-import { createEmptyStudent, loadAssessments, loadAccounts, loadModules, loadPendingStudentRegistrations, loadStudents, saveAccounts, savePendingStudentRegistrations, saveStudents, safeJsonParse, PendingStudentRegistration, NstpStudent, NstpAccount, NstpComponent, NstpRole, BiliranMunicipality, BILIRAN_MUNICIPALITIES, NSTP_COMPONENTS, toNstpComponent, loadTrainingGroups, saveTrainingGroups, syncAllFromApi, syncCollectionFromApi, syncToApi, AUDIT_LOG_KEY, type CoordinatorScope } from '../../../data/nstpData';
+import { createEmptyStudent, safeJsonParse, PendingStudentRegistration, NstpStudent, NstpAccount, NstpComponent, NstpRole, BiliranMunicipality, BILIRAN_MUNICIPALITIES, NSTP_COMPONENTS, toNstpComponent, AUDIT_LOG_KEY, type CoordinatorScope } from '../../../data/nstpData';
 import { apiPost, apiPut, apiDel } from '../../../services/apiClient';
 import { toast } from 'sonner';
-import { useCurrentUser, useUpdateCurrentUser } from '../../../hooks/index';
+import { useQueryClient } from '@tanstack/react-query';
+import {
+  useCurrentUser,
+  useUpdateCurrentUser,
+  useStudents,
+  useAccounts,
+  useUpsertAccount,
+  useModules,
+  useAssessments,
+  useTrainingGroups,
+  usePendingRegistrations,
+  usePatchStudent,
+  useUpsertStudent,
+  useDeleteStudent,
+} from '../../../hooks/index';
+import { batchUpsert, patchStudent } from '../../../services/api';
 import { parseStudentCsv, toCsv } from '../../../utils/spreadsheet';
 import { ACCEPTED_COMPONENTS_HINT, validateStudentImportRows } from '../../../utils/studentImport';
 import { createRegistrationApprovalClient, getRegistrationApprovalErrorMessage } from '../services/registrationApproval';
@@ -146,7 +161,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingStudentRegistration[]>([]);
   const [approvingRegistrationIds, setApprovingRegistrationIds] = useState<string[]>([]);
   const [registrationApprovalErrors, setRegistrationApprovalErrors] = useState<Record<string, string>>({});
-  const [trainingGroups, setTrainingGroups] = useState(loadTrainingGroups());
+  const [trainingGroups, setTrainingGroups] = useState<any[]>([]);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
   const [sortBy, setSortBy] = useState('risk');
@@ -180,21 +195,41 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const [profileTemplateError, setProfileTemplateError] = useState<string | null>(null);
   const [profileTemplateDirty, setProfileTemplateDirty] = useState(false);
 
+  const { data: serverStudents = [], isLoading: studentsLoading, refetch: refetchStudents } = useStudents();
+  const { data: serverAccounts = [], isLoading: accountsLoading } = useAccounts();
+  const { data: serverModules = [], isLoading: modulesLoading } = useModules();
+  const { data: serverAssessments = [], isLoading: assessmentsLoading } = useAssessments();
+  const { data: serverTrainingGroups = [] } = useTrainingGroups();
+  const { data: serverPendingRegistrations = [] } = usePendingRegistrations();
+  const patchStudentMutation = usePatchStudent();
+  const upsertStudentMutation = useUpsertStudent();
+  const deleteStudentMutation = useDeleteStudent();
+  const upsertAccountMutation = useUpsertAccount();
+  const queryClient = useQueryClient();
+
   useEffect(() => {
-    setStudents(loadStudents());
-    setPendingRegistrations(loadPendingStudentRegistrations());
-    setTrainingGroups(loadTrainingGroups());
+    if (serverStudents) {
+      setStudents(serverStudents);
+    }
+  }, [serverStudents]);
+
+  useEffect(() => {
+    if (serverPendingRegistrations) {
+      setPendingRegistrations(serverPendingRegistrations);
+    }
+  }, [serverPendingRegistrations]);
+
+  useEffect(() => {
+    if (serverTrainingGroups) {
+      setTrainingGroups(serverTrainingGroups);
+    }
+  }, [serverTrainingGroups]);
+
+  useEffect(() => {
     setAuditLog(safeJsonParse<AdminAuditEntry[]>(localStorage.getItem(AUDIT_LOG_KEY), []));
     setFilterPresets(safeJsonParse<StudentFilterPreset[]>(localStorage.getItem(FILTER_PRESETS_KEY), []));
     setFormTemplate(DEFAULT_FORM_TEMPLATE);
 
-    // Sync with backend API on mount — backend data takes priority
-    Promise.all([syncAllFromApi(), syncCollectionFromApi('nstp-student-roster'), syncCollectionFromApi('nstp-accounts', '?role=COORDINATOR'), syncCollectionFromApi('nstp-pending-student-registrations')]).then(() => {
-      setStudents(loadStudents());
-      setPendingRegistrations(loadPendingStudentRegistrations());
-      setTrainingGroups(loadTrainingGroups());
-      setAccountVersion((v) => v + 1);
-    });
     fetchProfileTemplates().then((collection) => {
       setActiveProfileTemplate(collection.active);
       setProfileTemplateVersions(collection.versions);
@@ -236,27 +271,24 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     return () => { document.body.style.overflow = ''; };
   }, [studentForm]);
 
-  const assessments = loadAssessments();
+  const assessments = serverAssessments;
   const publishedAssessmentCount = assessments.filter((assessment) => assessment.status === 'published').length;
-  const modules = loadModules();
-  const facilitatorAccounts = useMemo(() => loadAccounts().filter((account) => account.role === 'facilitator'), [accountVersion]);
-  const coordinatorAccounts = useMemo(() => loadAccounts().filter((account) => account.role === 'coordinator'), [accountVersion]);
-  const currentAdmin = useMemo(() => loadAccounts().find((account) => account.role === 'admin') || null, [accountVersion]);
+  const modules = serverModules;
+  const facilitatorAccounts = useMemo(() => serverAccounts.filter((account) => account.role === 'facilitator'), [serverAccounts]);
+  const coordinatorAccounts = useMemo(() => serverAccounts.filter((account) => account.role === 'coordinator'), [serverAccounts]);
+  const currentAdmin = useMemo(() => serverAccounts.find((account) => account.role === 'admin') || null, [serverAccounts]);
 
   const persistStudents = (nextStudents: NstpStudent[]) => {
-    saveStudents(nextStudents);
     setStudents(nextStudents);
   };
 
   const persistPendingRegistrations = (nextRegistrations: PendingStudentRegistration[]) => {
-    savePendingStudentRegistrations(nextRegistrations);
     setPendingRegistrations(nextRegistrations);
   };
 
   const persistAuditLog = (nextLog: AdminAuditEntry[]) => {
     localStorage.setItem(AUDIT_LOG_KEY, JSON.stringify(nextLog));
     setAuditLog(nextLog);
-    syncToApi(AUDIT_LOG_KEY, nextLog);
   };
 
   const logAudit = (action: string, detail: string) => {
@@ -390,7 +422,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
         }
       });
 
-      persistStudents(merged);
+      await batchUpsert('students', importedStudents);
+      refetchStudents();
       logAudit('Imported student CSV', `${importedStudents.length} rows processed`);
       toast.success(`${importedStudents.length} student records imported.`);
     } catch (error) {
@@ -417,12 +450,10 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
 
       try {
         await Promise.all([
-          syncCollectionFromApi('nstp-accounts'),
-          syncCollectionFromApi('nstp-student-roster'),
-          syncCollectionFromApi('nstp-pending-student-registrations'),
+          queryClient.invalidateQueries({ queryKey: ['accounts'] }),
+          queryClient.invalidateQueries({ queryKey: ['students'] }),
+          queryClient.invalidateQueries({ queryKey: ['pending-registrations'] }),
         ]);
-        setStudents(loadStudents());
-        setPendingRegistrations(loadPendingStudentRegistrations());
         setAccountVersion((version) => version + 1);
       } catch {
         toast.warning('Approval succeeded, but the updated roster could not be refreshed. Reload the page to retrieve the confirmed server data.');
@@ -468,32 +499,37 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     setStudentForm(null);
   };
 
-  const saveStudent = () => {
+  const saveStudent = async () => {
     if (!studentForm) return;
 
-    // An active student is visible to the coordinator of their component, so the
-    // component must be chosen explicitly before the record can go active. The
-    // form never fills this in on the administrator's behalf.
     if (studentForm.status === 'active' && !studentForm.component) {
       toast.error('Select an NSTP component before setting this student to active.');
       return;
     }
 
     const nextStudent = { ...studentForm, progress: Math.max(0, Math.min(100, Number(studentForm.progress) || 0)), assessments: Math.max(0, Number(studentForm.assessments) || 0), updatedAt: new Date().toISOString() };
-    const nextStudents = students.some((student) => student.id === nextStudent.id)
-      ? students.map((student) => (student.id === nextStudent.id ? nextStudent : student))
-      : [nextStudent, ...students];
 
-    persistStudents(nextStudents);
-    logAudit(editingStudentId === 'new' ? 'Created student' : 'Updated student', `${nextStudent.name} (${nextStudent.email})`);
-    cancelStudentEdit();
+    try {
+      if (editingStudentId === 'new') {
+        await upsertStudentMutation.mutateAsync(nextStudent);
+        setStudents((prev) => [nextStudent, ...prev]);
+        logAudit('Created student', `${nextStudent.name} (${nextStudent.email})`);
+      } else {
+        await patchStudentMutation.mutateAsync({ id: nextStudent.id, patch: nextStudent });
+        setStudents((prev) => prev.map((student) => (student.id === nextStudent.id ? nextStudent : student)));
+        logAudit('Updated student', `${nextStudent.name} (${nextStudent.email})`);
+      }
+      toast.success(editingStudentId === 'new' ? 'Student record created.' : 'Student record updated.');
+      cancelStudentEdit();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Unable to save student record.');
+    }
   };
 
   const deleteStudent = async (studentId: string) => {
     try {
-      await apiDel(`/nstp/admin/students/${studentId}`, null);
-      const nextStudents = students.filter((student) => student.id !== studentId);
-      persistStudents(nextStudents);
+      await deleteStudentMutation.mutateAsync(studentId);
+      setStudents((prev) => prev.filter((student) => student.id !== studentId));
       if (editingStudentId === studentId) {
         cancelStudentEdit();
       }
@@ -1097,20 +1133,23 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const adminDisplayName = adminProfile?.data?.title || adminProfile?.name || 'Dr. Reynold G. Bustillo';
   const adminDisplayRole = adminProfile?.data?.subtitle || 'NSTP Director';
 
-  const updateFacilitatorMunicipality = (facilitatorId: string, municipality: BiliranMunicipality, checked: boolean) => {
-    const accounts = loadAccounts();
-    const nextAccounts = accounts.map((account) => {
-      if (account.id !== facilitatorId || account.role !== 'facilitator') return account;
-      const currentMunicipalities = account.municipalities || [];
-      if (checked && currentMunicipalities.length >= 3) return account;
-      const nextMunicipalities = checked
-        ? Array.from(new Set([...currentMunicipalities, municipality]))
-        : currentMunicipalities.filter((item) => item !== municipality);
-      return { ...account, municipalities: nextMunicipalities };
-    });
-    saveAccounts(nextAccounts);
-    setAccountVersion((version) => version + 1);
-    logAudit('Updated municipality assignment', `${municipality} ${checked ? 'assigned to' : 'removed from'} facilitator account`);
+  const updateFacilitatorMunicipality = async (facilitatorId: string, municipality: BiliranMunicipality, checked: boolean) => {
+    const facilitator = serverAccounts.find((account) => account.id === facilitatorId);
+    if (!facilitator || facilitator.role !== 'facilitator') return;
+    const currentMunicipalities = facilitator.municipalities || [];
+    if (checked && currentMunicipalities.length >= 3) return;
+    const nextMunicipalities = checked
+      ? Array.from(new Set([...currentMunicipalities, municipality]))
+      : currentMunicipalities.filter((item) => item !== municipality);
+    const updated = { ...facilitator, municipalities: nextMunicipalities };
+    try {
+      await upsertAccountMutation.mutateAsync(updated);
+      setAccountVersion((version) => version + 1);
+      logAudit('Updated municipality assignment', `${municipality} ${checked ? 'assigned to' : 'removed from'} facilitator account`);
+      toast.success('Facilitator municipality updated.');
+    } catch {
+      toast.error('Failed to update facilitator municipality.');
+    }
   };
 
   const setTheme = () => {
@@ -1141,50 +1180,22 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     if (action === 'reports') setView('tools');
   };
 
-  const updateStudent = (studentId: string, patch: Partial<NstpStudent>) => {
+  const updateStudent = async (studentId: string, patch: Partial<NstpStudent>) => {
+    const prevStudents = students;
     const nextStudents = students.map((student) => (student.id === studentId ? { ...student, ...patch, updatedAt: new Date().toISOString() } : student));
-    persistStudents(nextStudents);
-    const updatedStudent = nextStudents.find((student) => student.id === studentId);
-    const assignedComponent = updatedStudent?.component ?? null;
-    if (updatedStudent?.status === 'active' && assignedComponent) {
-      const accounts = loadAccounts();
-      const nextAccounts = accounts.map((account) => (
-        account.id === updatedStudent.id || account.email.toLowerCase() === updatedStudent.email.toLowerCase()
-          ? {
-              ...account,
-              generalEducationComplete: true,
-              examTaken: account.examTaken ?? true,
-              preferredComponent: account.preferredComponent || assignedComponent,
-              component: assignedComponent,
-              componentAccessStatus: 'manual-approved',
-              surname: updatedStudent.surname,
-              firstName: updatedStudent.firstName,
-              middleName: updatedStudent.middleName,
-              school: updatedStudent.school,
-              degreeProgram: updatedStudent.degreeProgram,
-              gender: updatedStudent.gender,
-              birthdate: updatedStudent.birthdate,
-              cityAddress: updatedStudent.cityAddress,
-              provincialAddress: updatedStudent.provincialAddress,
-              contactNumber: updatedStudent.contactNumber,
-              municipality: updatedStudent.municipality,
-            }
-          : account
-      ));
-      saveAccounts(nextAccounts);
+    setStudents(nextStudents);
 
-      // The live session is never read from, or written to, `localStorage`: an
-      // account row can carry a `password` field and nothing consumes that key
-      // as a session any more. The event carries the updated row instead, and
-      // App re-normalises it, applying it only if the id and role still match
-      // the signed-in user.
-      const updatedAccount = nextAccounts.find((account) => (
-        account.id === updatedStudent.id || account.email.toLowerCase() === updatedStudent.email.toLowerCase()
-      ));
-      if (updatedAccount) {
-        const { password: _password, ...accountWithoutPassword } = updatedAccount;
-        window.dispatchEvent(new CustomEvent('nstp-current-user-updated', { detail: accountWithoutPassword }));
+    try {
+      await patchStudentMutation.mutateAsync({ id: studentId, patch });
+      const updatedStudent = nextStudents.find((student) => student.id === studentId);
+      const assignedComponent = updatedStudent?.component ?? null;
+      if (updatedStudent?.status === 'active' && assignedComponent) {
+        logAudit('Component assigned', `${updatedStudent.name} assigned to ${assignedComponent}`);
       }
+      toast.success('Student updated.');
+    } catch (error) {
+      setStudents(prevStudents);
+      toast.error('Failed to update student record.');
     }
   };
 
@@ -1206,17 +1217,24 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     setSelectedStudentIds((current) => Array.from(new Set([...current, ...visibleIds])));
   };
 
-  const applyBulkPatch = (patch: Partial<NstpStudent>) => {
+  const applyBulkPatch = async (patch: Partial<NstpStudent>) => {
     if (selectedStudentIds.length === 0) return;
     const nextStudents = students.map((student) => {
       if (!selectedStudentIds.includes(student.id)) return student;
       return { ...student, ...patch, updatedAt: new Date().toISOString() };
     });
-    persistStudents(nextStudents);
-    logAudit('Bulk student update', `${selectedStudentIds.length} selected records updated`);
+    setStudents(nextStudents);
+    try {
+      await Promise.all(selectedStudentIds.map((id) => patchStudentMutation.mutateAsync({ id, patch })));
+      logAudit('Bulk student update', `${selectedStudentIds.length} selected records updated`);
+      toast.success(`${selectedStudentIds.length} records updated.`);
+    } catch {
+      toast.error('Failed to apply bulk update.');
+      refetchStudents();
+    }
   };
 
-  const applyBulkProgressDelta = (delta: number) => {
+  const applyBulkProgressDelta = async (delta: number) => {
     if (selectedStudentIds.length === 0) return;
     const nextStudents = students.map((student) => {
       if (!selectedStudentIds.includes(student.id)) return student;
@@ -1229,8 +1247,19 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
         updatedAt: new Date().toISOString(),
       };
     });
-    persistStudents(nextStudents);
-    logAudit('Bulk progress adjustment', `${selectedStudentIds.length} records changed by ${delta}`);
+    setStudents(nextStudents);
+    try {
+      await Promise.all(
+        nextStudents
+          .filter((s) => selectedStudentIds.includes(s.id))
+          .map((s) => patchStudentMutation.mutateAsync({ id: s.id, patch: { progress: s.progress, status: s.status } }))
+      );
+      logAudit('Bulk progress adjustment', `${selectedStudentIds.length} records changed by ${delta}`);
+      toast.success('Progress adjusted.');
+    } catch {
+      toast.error('Failed to adjust progress.');
+      refetchStudents();
+    }
   };
 
   const exportStudentsCsv = (rows: NstpStudent[]) => {
@@ -2207,7 +2236,20 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                           </tr>
                         </thead>
                         <tbody>
-                          {paginatedStudents.map((student) => (
+                          {studentsLoading ? (
+                            Array.from({ length: 5 }).map((_, idx) => (
+                              <tr key={`skeleton-${idx}`} className="border-t border-slate-100 dark:border-slate-800 animate-pulse">
+                                <td className="px-3 py-4"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-28 mb-1" /><div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-20" /></td>
+                                <td className="px-3 py-4"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-16" /></td>
+                                <td className="px-3 py-4"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-20" /></td>
+                                <td className="px-3 py-4"><div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl w-32" /></td>
+                                <td className="px-3 py-4"><div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full w-24" /></td>
+                                <td className="px-3 py-4"><div className="h-5 bg-slate-100 dark:bg-slate-800 rounded-full w-14" /></td>
+                                <td className="px-3 py-4 text-right"><div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl w-16 ml-auto" /></td>
+                              </tr>
+                            ))
+                          ) : (
+                            paginatedStudents.map((student) => (
                             <tr key={student.id} className="border-t border-slate-100 hover:bg-blue-50/60 dark:border-slate-800 dark:hover:bg-slate-900">
                               <td className="px-3 py-3">
                                 <p className="truncate font-semibold text-slate-950 dark:text-white">{student.name}</p>
@@ -2252,10 +2294,10 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                                 </div>
                               </td>
                             </tr>
-                          ))}
+                          )))}
                         </tbody>
                       </table>
-                      {filteredStudents.length === 0 && <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">No students match the current filters.</div>}
+                      {!studentsLoading && filteredStudents.length === 0 && <div className="p-8 text-center text-sm text-slate-500 dark:text-slate-400">No students match the current filters.</div>}
                     </div>
                     <div className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300 sm:flex-row sm:items-center sm:justify-between">
                       <span>Showing {studentPageStart} to {studentPageEnd} of {filteredStudents.length} students</span>
@@ -2342,7 +2384,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                                   {(fac.municipalities || []).slice(0, 3).map((m) => <span key={m} className="rounded-full bg-blue-50 px-2 py-0.5 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{m}</span>)}
                                 </div>
                               </td>
-                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{loadStudents().filter((s) => s.facilitatorId === fac.id || fac.municipalities?.includes(s.assignedMunicipality || s.municipality || '')).length}</td>
+                              <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{students.filter((s) => s.facilitatorId === fac.id || fac.municipalities?.includes(s.assignedMunicipality || s.municipality || '')).length}</td>
                             </tr>
                           ))}
                           {facilitatorAccounts.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-sm text-slate-500">No facilitators found.</td></tr>}
@@ -2533,7 +2575,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                       {BILIRAN_MUNICIPALITIES.map((municipality) => {
                         const assigned = facilitatorAccounts.filter((account) => account.municipalities?.includes(municipality));
                         const studentCount = students.filter((student) => student.municipality === municipality).length;
-                        const municipalityGroups = trainingGroups.filter((group) => group.municipality === municipality || group.programHandles.some((handle) => handle.toLowerCase().includes(municipality.toLowerCase())));
+                        const municipalityGroups = trainingGroups.filter((group: any) => group.municipality === municipality || group.programHandles?.some((handle: string) => handle.toLowerCase().includes(municipality.toLowerCase())));
                         return (
                           <article key={municipality} className="rounded-2xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
                             <div className="mb-4 flex items-start justify-between gap-3">
@@ -3970,7 +4012,21 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                 </tr>
               </thead>
               <tbody>
-                {filteredStudents.map((student) => (
+                {studentsLoading ? (
+                  Array.from({ length: 5 }).map((_, idx) => (
+                    <tr key={`dir-skeleton-${idx}`} className="border-b border-slate-100 dark:border-slate-800 animate-pulse">
+                      <td className="py-4 px-4"><div className="h-4 bg-slate-200 dark:bg-slate-700 rounded w-32 mb-1" /><div className="h-3 bg-slate-100 dark:bg-slate-800 rounded w-24" /></td>
+                      <td className="py-4 px-4"><div className="h-6 bg-slate-100 dark:bg-slate-800 rounded-lg w-20" /></td>
+                      <td className="py-4 px-4"><div className="h-2 bg-slate-100 dark:bg-slate-800 rounded-full w-28" /></td>
+                      <td className="py-4 px-4"><div className="h-4 bg-slate-100 dark:bg-slate-800 rounded w-12" /></td>
+                      <td className="py-4 px-4"><div className="h-6 bg-slate-100 dark:bg-slate-800 rounded-lg w-20" /></td>
+                      <td className="py-4 px-4"><div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl w-24" /></td>
+                    </tr>
+                  ))
+                ) : filteredStudents.length === 0 ? (
+                  <tr><td colSpan={6} className="py-8 text-center text-sm text-slate-500">No students found.</td></tr>
+                ) : (
+                  filteredStudents.map((student) => (
                   <tr key={student.id} className="border-b border-slate-100 hover:bg-blue-50/70 transition-colors dark:border-slate-800 dark:hover:bg-slate-800/40">
                     <td className="py-4 px-4">
                       <div>
@@ -4033,7 +4089,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                       </div>
                     </td>
                   </tr>
-                ))}
+                )))}
               </tbody>
             </table>
           </div>

@@ -5,11 +5,9 @@ import {
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import {
-  BILIRAN_MUNICIPALITIES, createEmptyModule, loadAttendanceRecords, loadAttendanceSessions, NstpAccount, NstpAttendanceRecord, NstpAttendanceSession, NstpModule, NstpStudent,
+  BILIRAN_MUNICIPALITIES, createEmptyModule, NstpAccount, NstpAttendanceRecord, NstpAttendanceSession, NstpModule, NstpStudent,
 } from '../../../data/nstpData';
-import {
-  DEMO_ACCOUNTS_SEED, DEMO_ASSESSMENTS_SEED, DEMO_CLASSES_SEED, DEMO_MODULES_SEED, DEMO_STUDENTS_SEED,
-} from '../../../data/demoSeedData';
+import { fetchAttendanceRecords, fetchAttendanceSessions } from '../../../services/api';
 import { createManagedModule, fetchManagedModules, removeManagedModule, updateManagedModule } from '../../../services/modules';
 import { fetchManagedAssessments } from '../../../services/assessments';
 import { COMPONENT_TYPE_LABELS, createMyFacilitator, facilitatorRecordToAccount, fetchMyFacilitators, setMyFacilitatorStatus, updateMyFacilitator } from '../../../services/staff';
@@ -57,6 +55,7 @@ export default function CoordinatorDashboard({
   const [editingFacilitator, setEditingFacilitator] = useState<NstpAccount | null>(null);
   const [facilitatorError, setFacilitatorError] = useState<string | null>(null);
   const [facilitatorSaving, setFacilitatorSaving] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   // Coordinator scope resolution lives in one shared hook so that this
   // dashboard and the reports screen cannot drift apart on where the scope is
@@ -84,24 +83,21 @@ export default function CoordinatorDashboard({
     setRosterLoading(true);
     setStudentError(null);
     setClassError(null);
+    setModuleError(null);
+    setFacilitatorError(null);
 
-    const loadModulesAndRoster = async () => {
+    const fetchModulesAndRoster = async () => {
       let moduleRecords: NstpModule[] = [];
       try {
         moduleRecords = await fetchManagedModules('coordinator');
         if (cancelled) return;
-        if (moduleRecords.length > 0) {
-          setModules(moduleRecords);
-        } else {
-          moduleRecords = DEMO_MODULES_SEED.filter((m) => m.component === coordinatorScope || m.component === 'Common');
-          setModules(moduleRecords);
-        }
-        setModuleError(null);
-      } catch {
-        if (cancelled) return;
-        moduleRecords = DEMO_MODULES_SEED.filter((m) => m.component === coordinatorScope || m.component === 'Common');
         setModules(moduleRecords);
         setModuleError(null);
+      } catch (err) {
+        if (cancelled) return;
+        moduleRecords = [];
+        setModules([]);
+        setModuleError(err instanceof Error ? err.message : 'Unable to load coordinator modules.');
       }
 
       // Progress is measured against the published modules in this scope so the
@@ -111,69 +107,55 @@ export default function CoordinatorDashboard({
       try {
         const roster = await fetchCoordinatorStudents(publishedTarget);
         if (cancelled) return;
-        if (roster.length > 0) {
-          setStudents(roster);
-        } else {
-          const fallback = DEMO_STUDENTS_SEED.filter((s) => s.component === coordinatorScope || (!s.component && coordinatorScope === 'CWTS'));
-          setStudents(fallback);
-        }
+        setStudents(roster);
         setStudentError(null);
-      } catch {
+      } catch (err) {
         if (cancelled) return;
-        const fallback = DEMO_STUDENTS_SEED.filter((s) => s.component === coordinatorScope || (!s.component && coordinatorScope === 'CWTS'));
-        setStudents(fallback);
-        setStudentError(null);
+        setStudents([]);
+        setStudentError(err instanceof Error ? err.message : 'Unable to load coordinator student roster.');
       } finally {
         if (!cancelled) setRosterLoading(false);
       }
     };
 
-    loadModulesAndRoster();
+    fetchModulesAndRoster();
 
     fetchCoordinatorClasses()
       .then((records) => {
         if (!cancelled) {
-          if (records.length > 0) {
-            setClasses(records);
-          } else {
-            setClasses(DEMO_CLASSES_SEED.filter((c) => c.component === coordinatorScope || coordinatorScope === 'CWTS'));
-          }
+          setClasses(records);
           setClassError(null);
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (cancelled) return;
-        setClasses(DEMO_CLASSES_SEED.filter((c) => c.component === coordinatorScope || coordinatorScope === 'CWTS'));
-        setClassError(null);
+        setClasses([]);
+        setClassError(err instanceof Error ? err.message : 'Unable to load component classes.');
       });
 
     fetchManagedAssessments('coordinator')
-      .then((records) => { if (!cancelled) setAssessmentCount(records.length || DEMO_ASSESSMENTS_SEED.length); })
-      .catch(() => { if (!cancelled) setAssessmentCount(DEMO_ASSESSMENTS_SEED.length); });
+      .then((records) => { if (!cancelled) setAssessmentCount(records.length); })
+      .catch(() => { if (!cancelled) setAssessmentCount(0); });
 
     fetchMyFacilitators()
       .then((records) => {
         if (!cancelled) {
-          if (records.length > 0) {
-            setFacilitators(records.map(facilitatorRecordToAccount));
-          } else {
-            setFacilitators(DEMO_ACCOUNTS_SEED.filter((a) => a.role === 'facilitator'));
-          }
+          setFacilitators(records.map(facilitatorRecordToAccount));
           setFacilitatorError(null);
         }
       })
-      .catch(() => {
+      .catch((err) => {
         if (!cancelled) {
-          setFacilitators(DEMO_ACCOUNTS_SEED.filter((a) => a.role === 'facilitator'));
-          setFacilitatorError(null);
+          setFacilitators([]);
+          setFacilitatorError(err instanceof Error ? err.message : 'Unable to load assigned facilitators.');
         }
       });
 
-    setAttendanceSessions(loadAttendanceSessions());
-    setAttendanceRecords(loadAttendanceRecords());
+    fetchAttendanceSessions().then((res) => { if (!cancelled) setAttendanceSessions(res); }).catch(() => {});
+    fetchAttendanceRecords().then((res) => { if (!cancelled) setAttendanceRecords(res); }).catch(() => {});
 
     return () => { cancelled = true; };
-  }, [coordinatorScope]);
+  }, [coordinatorScope, reloadKey]);
 
   // The API already restricted these collections to this coordinator's
   // components, so no second client-side scope filter is applied. Re-filtering
@@ -340,10 +322,18 @@ export default function CoordinatorDashboard({
         </div>
       );
     }
-    if (studentError || classError) {
+    const activeError = studentError || classError || moduleError || facilitatorError;
+    if (activeError) {
       return (
-        <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
-          {studentError || classError}
+        <div role="alert" className="flex items-center justify-between rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+          <span>{activeError}</span>
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="ml-3 rounded-lg border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-600 dark:bg-slate-900 dark:text-rose-200"
+          >
+            Retry
+          </button>
         </div>
       );
     }

@@ -4,6 +4,7 @@ import { adminAccountSelect, adminStudentSelect, pendingRegistrationSelect, toAd
 import { assertPlaintextPassword } from '../auth/passwords.js';
 import { normalizeModuleUrls } from './module-url.validation.js';
 import { normalizeSlotLimits, toCanonicalComponentType, DEFAULT_CANONICAL_SLOT_LIMITS } from './component-normalization.js';
+import { getAutomaticTrackRouting, validateTrackPlacement } from '../../constants/bipsuPrograms.js';
 
 const now = () => new Date().toISOString();
 
@@ -271,6 +272,7 @@ function moduleAccessFilter(access) {
       OR: [
         { instructorId: access.instructorId },
         ...(componentIds.length ? [{ componentId: { in: componentIds } }] : []),
+        { componentId: null },
       ],
     };
   }
@@ -486,19 +488,29 @@ function toStudentAssessmentDto(quiz) {
   };
 }
 
-function assessmentModuleWhere(actor) {
+function assessmentModuleWhere(actor, forListing = false) {
   if (actor.role === 'ADMIN') return {};
-  // `in: []` matches nothing, which is the correct reading of "this coordinator
-  // has no components". Do not rewrite this as
-  // `componentIds.length ? { componentId: { in: … } } : {}` — that spelling turns
-  // zero access into unrestricted access.
-  if (actor.role === 'COORDINATOR') return { componentId: { in: actor.componentIds || [] } };
-  if (actor.role === 'INSTRUCTOR') return {
-    OR: [
-      { instructorId: actor.instructorId },
-      ...(actor.componentIds?.length ? [{ componentId: { in: actor.componentIds } }] : []),
-    ],
-  };
+  if (actor.role === 'COORDINATOR') {
+    if (forListing) {
+      return {
+        OR: [
+          { componentId: { in: actor.componentIds || [] } },
+          { componentId: null },
+        ],
+      };
+    }
+    return { componentId: { in: actor.componentIds || [] } };
+  }
+  if (actor.role === 'INSTRUCTOR') {
+    const clauses = [{ instructorId: actor.instructorId }];
+    if (actor.componentIds?.length) {
+      clauses.push({ componentId: { in: actor.componentIds } });
+    }
+    if (forListing) {
+      clauses.push({ componentId: null });
+    }
+    return { OR: clauses };
+  }
   return { id: '__forbidden__' };
 }
 
@@ -584,7 +596,7 @@ async function replaceAssessmentQuestions(client, quizId, questions) {
 export async function listManagedAssessments(actor) {
   return withDatabase('assessments', async () => {
     const records = await prisma.quiz.findMany({
-      where: { module: assessmentModuleWhere(actor) },
+      where: { module: assessmentModuleWhere(actor, true) },
       orderBy: { createdAt: 'desc' },
       include: assessmentInclude,
     });
@@ -1202,6 +1214,15 @@ export async function upsertAdminResource(name, lookup, payload, context = {}) {
           throw err;
         }
 
+        const degreeProg = student?.course || user?.data?.degreeProgram || nextPayload.degreeProgram;
+        const school = user?.data?.school || user?.data?.department || nextPayload.school;
+        const trackCheck = validateTrackPlacement(degreeProg, school, canonicalComp);
+        if (!trackCheck.valid) {
+          const err = new Error(trackCheck.error);
+          err.statusCode = 400;
+          throw err;
+        }
+
         const appState = await tx.componentApplicationState.findFirst({
           where: { isCurrent: true },
           orderBy: { updatedAt: 'desc' },
@@ -1486,12 +1507,22 @@ export async function placeStudent(tx, {
 }) {
   let student = null;
   if (studentId) {
-    student = await tx.studentProfile.findUnique({ where: { id: studentId } });
+    student = await tx.studentProfile.findUnique({ where: { id: studentId }, include: { user: true } });
   } else if (userId) {
-    student = await tx.studentProfile.findUnique({ where: { userId } });
+    student = await tx.studentProfile.findUnique({ where: { userId }, include: { user: true } });
   }
   if (!student) {
     throw new Error(`Student profile not found for placement: ${studentId || userId}`);
+  }
+
+  // Automatic Track Classification Validation
+  const degreeProg = student.course || student.data?.degreeProgram || student.user?.data?.degreeProgram;
+  const school = student.data?.school || student.user?.data?.school;
+  const trackCheck = validateTrackPlacement(degreeProg, school, canonicalComponent);
+  if (!trackCheck.valid) {
+    const err = new Error(trackCheck.error);
+    err.statusCode = 400;
+    throw err;
   }
 
   // Resolve cycle from ComponentApplicationState or section if not explicitly provided
@@ -1504,12 +1535,17 @@ export async function placeStudent(tx, {
       if (cycleSemester === undefined) cycleSemester = sec?.semester ?? null;
     }
     if (!cycleSchoolYear || !cycleSemester) {
-      const appState = await tx.componentApplicationState.findFirst({
-        where: { isCurrent: true },
-        orderBy: { updatedAt: 'desc' },
-      }) || await tx.componentApplicationState.findFirst({
-        orderBy: { updatedAt: 'desc' },
-      });
+      let appState = null;
+      try {
+        appState = (tx.componentApplicationState?.findFirst
+          ? await tx.componentApplicationState.findFirst({
+              where: { isCurrent: true },
+              orderBy: { updatedAt: 'desc' },
+            }) || await tx.componentApplicationState.findFirst({
+              orderBy: { updatedAt: 'desc' },
+            })
+          : null);
+      } catch {}
       if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
       if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
     }
@@ -1528,10 +1564,34 @@ export async function placeStudent(tx, {
   });
   const componentId = component?.id || canonicalComponent;
 
+  // If sectionId is not provided, auto-assign to active section in student's municipality
+  let assignedSectionId = sectionId || student.sectionId;
+  if (!assignedSectionId) {
+    const studentMunicipality = student.data?.municipality || student.user?.data?.municipality;
+    if (studentMunicipality) {
+      const matchedSec = await tx.section.findFirst({
+        where: {
+          componentId,
+          OR: [
+            { name: { contains: studentMunicipality, mode: 'insensitive' } },
+            { code: { contains: studentMunicipality.toUpperCase() } },
+          ],
+        },
+      });
+      if (matchedSec) {
+        assignedSectionId = matchedSec.id;
+      }
+    }
+  }
+
   // Single source of component assignment: StudentProfile.componentId
+  const profileUpdateData = { componentId };
+  if (assignedSectionId) {
+    profileUpdateData.sectionId = assignedSectionId;
+  }
   const updatedStudent = await tx.studentProfile.update({
     where: { id: student.id },
-    data: { componentId },
+    data: profileUpdateData,
   });
 
   // Drop other components' enrollments for this student for that term
@@ -1543,10 +1603,12 @@ export async function placeStudent(tx, {
   if (cycleSchoolYear) dropWhere.schoolYear = cycleSchoolYear;
   if (cycleSemester) dropWhere.semester = cycleSemester;
 
-  await tx.enrollment.updateMany({
-    where: dropWhere,
-    data: { status: 'DROPPED' },
-  });
+  if (tx.enrollment?.updateMany) {
+    await tx.enrollment.updateMany({
+      where: dropWhere,
+      data: { status: 'DROPPED' },
+    });
+  }
 
   // Find existing enrollment in target component for this student and cycle
   const existingEnrollment = await tx.enrollment.findFirst({
@@ -1564,7 +1626,7 @@ export async function placeStudent(tx, {
       where: { id: existingEnrollment.id },
       data: {
         status: 'ACTIVE',
-        sectionId: sectionId !== undefined ? sectionId : existingEnrollment.sectionId,
+        sectionId: assignedSectionId !== undefined ? assignedSectionId : existingEnrollment.sectionId,
         schoolYear: cycleSchoolYear,
         semester: cycleSemester,
       },
@@ -1574,7 +1636,7 @@ export async function placeStudent(tx, {
       data: {
         studentId: student.id,
         componentId,
-        sectionId,
+        sectionId: assignedSectionId,
         schoolYear: cycleSchoolYear,
         semester: cycleSemester,
         status: 'ACTIVE',
@@ -1603,14 +1665,37 @@ export async function countDistinctPlacedStudents(tx, {
   });
   const componentId = component?.id || canonicalComponent;
 
+  if (tx.studentProfile?.count && !tx.enrollment?.findMany) {
+    const where = {
+      componentId,
+      ...(currentStudentId ? { id: { not: currentStudentId } } : {}),
+      ...(currentUserId ? { userId: { not: currentUserId } } : {}),
+    };
+    if (schoolYear || semester) {
+      where.enrollments = {
+        some: {
+          status: 'ACTIVE',
+          section: {
+            ...(schoolYear ? { schoolYear } : {}),
+            ...(semester ? { semester } : {}),
+          },
+        },
+      };
+    }
+    return await tx.studentProfile.count({ where });
+  }
+
   // Resolve open cycle from ComponentApplicationState if not explicitly provided
   let cycleSchoolYear = schoolYear;
   let cycleSemester = semester;
   if (cycleSchoolYear === undefined || cycleSemester === undefined) {
-    const appState = await tx.componentApplicationState.findFirst({
-      where: { applicationClosed: false },
-      orderBy: { updatedAt: 'desc' },
-    });
+    let appState = null;
+    try {
+      appState = await tx.componentApplicationState?.findFirst?.({
+        where: { applicationClosed: false },
+        orderBy: { updatedAt: 'desc' },
+      });
+    } catch {}
     if (cycleSchoolYear === undefined) cycleSchoolYear = appState?.schoolYear ?? null;
     if (cycleSemester === undefined) cycleSemester = appState?.semester ?? null;
   }
@@ -1640,11 +1725,202 @@ export async function countDistinctPlacedStudents(tx, {
   }
 
   // Count distinct placed students with ACTIVE enrollments for that cycle
-  const activeEnrollments = await tx.enrollment.findMany({
-    where,
-    distinct: ['studentId'],
-    select: { studentId: true },
-  });
+  const activeEnrollments = tx.enrollment?.findMany
+    ? await tx.enrollment.findMany({
+        where,
+        distinct: ['studentId'],
+        select: { studentId: true },
+      })
+    : [];
 
   return activeEnrollments.length;
+}
+
+export async function patchAdminStudent(id, patch = {}) {
+  const student = await prisma.studentProfile.findFirst({
+    where: {
+      OR: [
+        { id },
+        { userId: id },
+        { studentNumber: id },
+      ],
+    },
+    include: {
+      user: true,
+      component: true,
+    },
+  });
+
+  if (!student) {
+    const error = new Error(`Student not found: ${id}`);
+    error.statusCode = 404;
+    throw error;
+  }
+
+  // Handle component update / placement
+  if (patch.component !== undefined || patch.componentId !== undefined) {
+    const targetComp = patch.component !== undefined ? patch.component : patch.componentId;
+    if (!targetComp) {
+      await prisma.studentProfile.update({
+        where: { id: student.id },
+        data: { componentId: null },
+      });
+      await prisma.enrollment.updateMany({
+        where: { studentId: student.id, status: 'ACTIVE' },
+        data: { status: 'DROPPED' },
+      });
+      const userData = (student.user?.data || {});
+      delete userData.component;
+      await prisma.user.update({
+        where: { id: student.userId },
+        data: { data: userData },
+      });
+    } else {
+      const canonicalComponent = toCanonicalComponentType(targetComp);
+      if (canonicalComponent) {
+        await placeStudent(prisma, {
+          studentId: student.id,
+          canonicalComponent,
+        });
+        const userData = (student.user?.data || {});
+        userData.component = targetComp;
+        await prisma.user.update({
+          where: { id: student.userId },
+          data: { data: userData },
+        });
+      }
+    }
+  }
+
+  // Handle student profile updates
+  const updateData = {};
+  if (patch.course !== undefined) updateData.course = patch.course;
+  if (patch.degreeProgram !== undefined && patch.course === undefined) updateData.course = patch.degreeProgram;
+  if (patch.yearLevel !== undefined) updateData.yearLevel = patch.yearLevel;
+  if (patch.sectionId !== undefined) updateData.sectionId = patch.sectionId;
+
+  const existingData = (student.data && typeof student.data === 'object' && !Array.isArray(student.data)) ? student.data : {};
+  const patchData = (patch.data && typeof patch.data === 'object' && !Array.isArray(patch.data)) ? patch.data : {};
+  const studentExtras = {};
+  const ignoredFields = ['id', 'studentId', 'studentNumber', 'userId', 'component', 'componentId', 'course', 'degreeProgram', 'yearLevel', 'sectionId', 'user', 'createdAt', 'updatedAt', 'data'];
+  for (const [key, value] of Object.entries(patch)) {
+    if (!ignoredFields.includes(key)) {
+      studentExtras[key] = value;
+    }
+  }
+
+  const mergedData = { ...existingData, ...patchData, ...studentExtras };
+  updateData.data = mergedData;
+
+  await prisma.studentProfile.update({
+    where: { id: student.id },
+    data: updateData,
+  });
+
+  if (patch.name || patch.email) {
+    await prisma.user.update({
+      where: { id: student.userId },
+      data: {
+        ...(patch.name ? { name: patch.name } : {}),
+        ...(patch.email ? { email: patch.email } : {}),
+      },
+    });
+  }
+
+  const refreshed = await prisma.studentProfile.findUnique({
+    where: { id: student.id },
+    select: adminStudentSelect,
+  });
+
+  return toAdminStudentDto(refreshed);
+}
+
+export async function listAnnouncements(user) {
+  const where = {};
+  if (user && user.role !== 'ADMIN') {
+    const roleAudience = user.role.toLowerCase();
+    const audienceList = ['all', roleAudience];
+    if (roleAudience === 'instructor') audienceList.push('facilitator');
+    where.audience = { in: audienceList };
+  }
+  const announcements = await prisma.announcement.findMany({
+    where,
+    orderBy: { createdAt: 'desc' },
+    include: {
+      author: {
+        select: { id: true, name: true, role: true },
+      },
+    },
+  });
+
+  return announcements.map((a) => ({
+    id: a.id,
+    title: a.title,
+    message: a.message,
+    audience: a.audience,
+    priority: a.priority,
+    createdBy: a.author?.name || a.createdBy,
+    createdById: a.createdBy,
+    createdAt: a.createdAt.toISOString(),
+    updatedAt: a.updatedAt.toISOString(),
+  }));
+}
+
+export async function createAnnouncement({ title, message, audience = 'all', priority = 'normal', userId }) {
+  if (!title || !message) {
+    const error = new Error('Title and message are required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const announcement = await prisma.announcement.create({
+    data: {
+      title,
+      message,
+      audience: audience.toLowerCase(),
+      priority: priority.toLowerCase(),
+      createdBy: userId,
+    },
+    include: {
+      author: {
+        select: { id: true, name: true, role: true },
+      },
+    },
+  });
+
+  return {
+    id: announcement.id,
+    title: announcement.title,
+    message: announcement.message,
+    audience: announcement.audience,
+    priority: announcement.priority,
+    createdBy: announcement.author?.name || announcement.createdBy,
+    createdById: announcement.createdBy,
+    createdAt: announcement.createdAt.toISOString(),
+    updatedAt: announcement.updatedAt.toISOString(),
+  };
+}
+
+export async function deleteAnnouncement(id, user) {
+  const announcement = await prisma.announcement.findUnique({
+    where: { id },
+  });
+
+  if (!announcement) {
+    const error = new Error('Announcement not found.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  if (user.role !== 'ADMIN' && announcement.createdBy !== user.id) {
+    const error = new Error('Unauthorized to delete this announcement.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  await prisma.announcement.delete({
+    where: { id },
+  });
+
+  return { id, deleted: true };
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { TrendingUp, Award, Clock, Target, CheckCircle, BookOpen, Flame, Activity, ArrowLeft } from 'lucide-react';
-import { NstpAssessment, NstpModule, replaceAssessmentsSnapshot, replaceModulesSnapshot } from '../../../data/nstpData';
+import { NstpAssessment, NstpModule } from '../../../data/nstpData';
 import { PortalStatCard } from '../../../components/ui/portal';
 import { fetchManagedModules } from '../../../services/modules';
 import { fetchStudentAssessments } from '../../../services/assessments';
@@ -28,8 +28,6 @@ export default function ProgressTracker({ user, onBack }: { user: AuthenticatedU
     ]).then(([moduleRows, assessmentRows, response]) => {
       setModules(moduleRows);
       setPublishedAssessments(assessmentRows);
-      replaceModulesSnapshot(moduleRows);
-      replaceAssessmentsSnapshot(assessmentRows);
       setProgress(Object.fromEntries(response.data.progress.map((entry) => [entry.moduleId, Boolean(entry.completedAt)])));
       const latest = new Map<string, AssessmentResult>();
       response.data.attempts.forEach((attempt) => {

@@ -31,7 +31,21 @@ async function clearSensitiveApiCaches() {
 }
 
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(STATIC_CACHE).then((cache) => cache.addAll(STATIC_ASSETS)));
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    await Promise.allSettled(
+      STATIC_ASSETS.map(async (asset) => {
+        try {
+          const res = await fetch(asset, { cache: 'no-cache' });
+          if (res.ok) {
+            await cache.put(asset, res);
+          }
+        } catch {
+          // Resilient: ignore asset cache failure without crashing installation
+        }
+      })
+    );
+  })());
   self.skipWaiting();
 });
 

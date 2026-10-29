@@ -1,0 +1,72 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <title>NSTP Program Seal</title>
+  <defs>
+    <linearGradient id="ring" x1="96" y1="96" x2="416" y2="416" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B4EA2" />
+      <stop offset="1" stop-color="#2A7BE4" />
+    </linearGradient>
+    <linearGradient id="gold" x1="160" y1="144" x2="352" y2="368" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7C948" />
+      <stop offset="1" stop-color="#D89A1E" />
+    </linearGradient>
+    <linearGradient id="inner" x1="156" y1="156" x2="356" y2="356" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF" />
+      <stop offset="1" stop-color="#F3F7FF" />
+    </linearGradient>
+    <path id="topArc" d="M 92 256 A 164 164 0 0 1 420 256" />
+    <path id="bottomArc" d="M 420 256 A 164 164 0 0 1 92 256" />
+  </defs>
+
+  <circle cx="256" cy="256" r="232" fill="url(#ring)" />
+  <circle cx="256" cy="256" r="206" fill="#F7C948" />
+  <circle cx="256" cy="256" r="186" fill="url(#inner)" stroke="#163A72" stroke-width="8" />
+
+  <g opacity="0.95">
+    <path d="M256 256 L158 124 A186 186 0 0 1 256 70 Z" fill="#FFFFFF" stroke="#193D75" stroke-width="8" stroke-linejoin="round" />
+    <path d="M256 256 L374 124 A186 186 0 0 1 442 256 Z" fill="#FFFFFF" stroke="#193D75" stroke-width="8" stroke-linejoin="round" />
+    <path d="M256 256 L370 388 A186 186 0 0 1 142 388 Z" fill="#FFFFFF" stroke="#193D75" stroke-width="8" stroke-linejoin="round" />
+    <path d="M256 256 L70 256 A186 186 0 0 1 158 124 Z" fill="none" />
+  </g>
+
+  <circle cx="256" cy="256" r="92" fill="#FFFFFF" stroke="#163A72" stroke-width="8" />
+  <circle cx="256" cy="256" r="70" fill="#F8FBFF" stroke="#D7E2F3" stroke-width="4" />
+
+  <g stroke="#163A72" stroke-width="8" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M198 292 V228" />
+    <path d="M228 292 V210" />
+    <path d="M258 292 V198" />
+    <path d="M288 292 V214" />
+    <path d="M318 292 V232" />
+    <path d="M184 292 H328" />
+  </g>
+
+  <g transform="translate(112 144)">
+    <path d="M0 52 C18 20, 52 8, 84 18 L88 62 C54 76, 22 72, 0 52 Z" fill="#F8FBFF" stroke="#163A72" stroke-width="6" />
+    <circle cx="46" cy="40" r="18" fill="#F7C948" stroke="#163A72" stroke-width="5" />
+    <path d="M32 56 L18 76 H74 L60 56" fill="#D6A31D" stroke="#163A72" stroke-width="5" />
+    <path d="M56 48 h16" stroke="#163A72" stroke-width="5" />
+    <path d="M64 40 v16" stroke="#163A72" stroke-width="5" />
+  </g>
+
+  <g transform="translate(304 142)">
+    <path d="M0 72 C12 32, 42 10, 82 8 L72 56 C48 78, 20 82, 0 72 Z" fill="#F8FBFF" stroke="#163A72" stroke-width="6" />
+    <path d="M40 14 L52 40 L40 66 L28 40 Z" fill="#F7C948" stroke="#163A72" stroke-width="5" />
+    <path d="M52 40 H80" stroke="#D89A1E" stroke-width="8" />
+    <path d="M52 40 L74 26" stroke="#D89A1E" stroke-width="6" />
+    <path d="M52 40 L74 54" stroke="#D89A1E" stroke-width="6" />
+  </g>
+
+  <g transform="translate(205 322)">
+    <path d="M0 36 L18 0 L36 12 L54 0 L72 36 L36 64 Z" fill="#163A72" stroke="#0B274F" stroke-width="5" />
+    <circle cx="36" cy="33" r="10" fill="#F7C948" stroke="#0B274F" stroke-width="4" />
+    <path d="M36 43 L36 60" stroke="#0B274F" stroke-width="5" />
+    <path d="M26 56 H46" stroke="#0B274F" stroke-width="5" />
+  </g>
+
+  <text fill="#F7C948" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="34" letter-spacing="2">
+    <textPath href="#topArc" startOffset="50%" text-anchor="middle">NATIONAL SERVICE TRAINING PROGRAM</textPath>
+  </text>
+  <text fill="#F7C948" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="28" letter-spacing="4">
+    <textPath href="#bottomArc" startOffset="50%" text-anchor="middle">R. A. 9163</textPath>
+  </text>
+</svg>

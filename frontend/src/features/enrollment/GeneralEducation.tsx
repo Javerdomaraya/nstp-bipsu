@@ -3,9 +3,10 @@ import { Calendar, Clock, Users, Video, CheckCircle, Play, Lock, Award, Sparkles
 import AppShell from '../../components/layout/AppShell';
 import PageHeader from '../../components/layout/PageHeader';
 import StatCard from '../../components/common/StatCard';
-import { loadModules, loadAssessments, type NstpModule, type NstpAssessment } from '../../data/nstpData';
+import { type NstpModule, type NstpAssessment } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../../utils/moduleUrls';
+import { apiGet, apiPost } from '../../services/apiClient';
 
 const shuffleArray = <T,>(array: T[]): T[] => {
   const copy = [...array];
@@ -16,8 +17,6 @@ const shuffleArray = <T,>(array: T[]): T[] => {
   return copy;
 };
 
-const STORAGE_KEY_PREFIX = 'seminars-';
-
 type SeminarProgress = {
   completed: boolean;
   score: number;
@@ -25,6 +24,7 @@ type SeminarProgress = {
 };
 
 type AssessmentQuestion = {
+  id?: string;
   question: string;
   options: string[];
   correct: number;
@@ -50,13 +50,52 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
   );
 
   useEffect(() => {
-    setModules(loadModules());
-    setAssessments(loadAssessments());
+    let active = true;
 
-    const saved = localStorage.getItem(`${STORAGE_KEY_PREFIX}${user.id}`);
-    if (saved) {
-      setProgress(JSON.parse(saved));
+    async function loadData() {
+      try {
+        const [modRes, assRes, progRes] = await Promise.allSettled([
+          apiGet<NstpModule[]>('/nstp/students/me/modules').catch(() => apiGet<NstpModule[]>('/nstp/modules', [])),
+          apiGet<NstpAssessment[]>('/nstp/students/me/assessments').catch(() => apiGet<NstpAssessment[]>('/nstp/assessments', [])),
+          apiGet<{ success?: boolean; data?: { progress?: Array<{ moduleId: string; completedAt?: string }>; attempts?: Array<{ quizId: string; score: number }> } }>('/nstp/students/me/progress').catch(() => null),
+        ]);
+
+        if (!active) return;
+
+        const fetchedModules = modRes.status === 'fulfilled' && Array.isArray(modRes.value)
+          ? modRes.value
+          : [];
+        setModules(fetchedModules);
+
+        const fetchedAssessments = assRes.status === 'fulfilled' && Array.isArray(assRes.value)
+          ? assRes.value
+          : [];
+        setAssessments(fetchedAssessments);
+
+        const progressData = progRes.status === 'fulfilled' ? progRes.value?.data : null;
+        if (progressData) {
+          const progressMap: Record<string, SeminarProgress> = {};
+          for (const p of (progressData.progress || [])) {
+            progressMap[p.moduleId] = {
+              completed: !!p.completedAt,
+              score: 100,
+              completedDate: p.completedAt,
+            };
+          }
+          for (const a of (progressData.attempts || [])) {
+            const linkedModule = fetchedAssessments.find((ass) => ass.id === a.quizId)?.moduleId;
+            if (linkedModule && progressMap[linkedModule]) {
+              progressMap[linkedModule].score = Number(a.score) || 0;
+            }
+          }
+          setProgress(progressMap);
+        }
+      } catch (err) {
+        console.error('Failed to load student education modules:', err);
+      }
     }
+
+    loadData();
 
     const savedMedia = localStorage.getItem(MEDIA_CONSUMED_KEY);
     if (savedMedia) {
@@ -64,6 +103,8 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
         setMediaConsumed(JSON.parse(savedMedia));
       } catch { /* ignore */ }
     }
+
+    return () => { active = false; };
   }, [user.id]);
 
   const totalHours = commonModules.reduce((acc, m) => acc + (progress[m.id]?.completed ? m.hours : 0), 0);
@@ -111,7 +152,8 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
       const shuffled = shuffleArray(linked.questions);
       const count = linked.questionsToShow > 0 ? Math.min(linked.questionsToShow, shuffled.length) : shuffled.length;
       setAssessmentQuestions(
-        shuffled.slice(0, count).map((q) => ({
+        shuffled.slice(0, count).map((q, idx) => ({
+          id: q.id || `q-${idx}`,
           question: q.prompt,
           options: q.options,
           correct: q.correctIndex,
@@ -126,7 +168,7 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
     setAnswers({});
   };
 
-  const completeAssessment = () => {
+  const completeAssessment = async () => {
     if (!selectedModule) return;
 
     const correct = assessmentQuestions.reduce((acc, q, idx) => {
@@ -135,12 +177,32 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
     const total = assessmentQuestions.length;
     const score = total > 0 ? Math.round((correct / total) * 100) : 0;
 
+    const linked = getLinkedAssessment(selectedModule.id);
+    if (linked && assessmentQuestions.length > 0) {
+      try {
+        const submissionAnswers = assessmentQuestions.map((q, idx) => ({
+          questionId: q.id || `q-${idx}`,
+          optionIndex: typeof answers[idx] === 'number' ? answers[idx] : -1,
+        }));
+        await apiPost(`/nstp/students/me/assessments/${linked.id}/attempts`, {
+          answers: submissionAnswers,
+        });
+      } catch (err) {
+        console.warn('Unable to record assessment attempt on server:', err);
+      }
+    }
+
+    try {
+      await apiPost(`/nstp/students/me/modules/${selectedModule.id}/complete`, {});
+    } catch (err) {
+      console.warn('Unable to complete module on server:', err);
+    }
+
     const updatedProgress: Record<string, SeminarProgress> = {
       ...progress,
       [selectedModule.id]: { completed: true, score, completedDate: new Date().toISOString() },
     };
     setProgress(updatedProgress);
-    localStorage.setItem(`${STORAGE_KEY_PREFIX}${user.id}`, JSON.stringify(updatedProgress));
     setSelectedModule(null);
     setAssessmentActive(false);
   };
@@ -464,7 +526,7 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
                 </span>
                 <h1 className="mt-3 text-xl font-bold leading-tight sm:text-2xl md:text-3xl">General Education for NSTP readiness</h1>
                 <p className="mt-2 text-xs leading-relaxed text-blue-50 sm:text-sm">
-                  Finish the 25-hour seminar track, pass each short assessment, then unlock component selection for CWTS, LTS, MTS Army, or MTS Navy.
+                  Finish the 25-hour seminar track and pass each short assessment to unlock component placement (automatic MTS Army/Navy for Criminology, LTS for Teacher Education, and open track placement for other programs).
                 </p>
                 <div className="mt-3.5 flex flex-wrap gap-2 text-xs font-medium text-blue-50">
                   <span className="rounded-full bg-white/14 px-2.5 py-1">25 contact hours</span>

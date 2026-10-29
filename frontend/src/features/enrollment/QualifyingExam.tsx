@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FileText, Clock, AlertCircle, Award, LogOut } from 'lucide-react';
-import { loadQualifyingExamResults, saveQualifyingExamResults, syncStudentAccessFromQualifyingResult, NstpComponent, QualifyingExamResult } from '../../data/nstpData';
+import { FileText, Clock, AlertCircle, Award, LogOut, Shield } from 'lucide-react';
+import { NstpComponent, QualifyingExamResult, isCriminologyProgram, isTeacherEducationProgram } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
-import { apiPost } from '../../services/apiClient';
+import { apiPost, ApiRequestError } from '../../services/apiClient';
 import { toast } from 'sonner';
 
 export type QualifyingQuestion = {
@@ -23,6 +23,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
   const [timeLeft, setTimeLeft] = useState(3600);
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
+  const [submissionResult, setSubmissionResult] = useState<QualifyingExamResult | null>(null);
   const answersRef = useRef<Record<number, number>>({});
   const questionsRef = useRef<QualifyingQuestion[]>([]);
   const attemptIdRef = useRef<string | null>(null);
@@ -67,63 +68,78 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
     if (submittedRef.current) return;
     submittedRef.current = true;
 
-    try {
-      const payload = {
-        attemptId: attemptIdRef.current,
-        preferredComponent,
-        answers: Object.entries(answersRef.current).map(([qIdx, optIdx]) => ({
-          questionId: questionsRef.current[Number(qIdx)]?.id || `q-${qIdx}`,
-          optionIndex: optIdx,
-        })),
-      };
+    const payload = {
+      attemptId: attemptIdRef.current,
+      preferredComponent,
+      answers: Object.entries(answersRef.current).map(([qIdx, optIdx]) => ({
+        questionId: questionsRef.current[Number(qIdx)]?.id || `q-${qIdx}`,
+        optionIndex: optIdx,
+      })),
+    };
 
-      const res = await apiPost<{
-        success: boolean;
-        data: {
-          id: string;
-          score: number;
-          passed: boolean;
-          assignedComponent: string | null;
-          status: string;
-        };
-      } | null>('/nstp/students/me/qualifying-exam/submit', payload, null);
+    const maxRetries = 3;
+    let attempt = 0;
 
-      if (res?.data) {
-        const finalScore = res.data.score ?? 0;
-        setScore(finalScore);
-        setSubmitted(true);
+    while (attempt < maxRetries) {
+      try {
+        const res = await apiPost<{
+          success: boolean;
+          data: {
+            id: string;
+            score: number;
+            passed: boolean;
+            assignedComponent: string | null;
+            status: string;
+          };
+        } | null>('/nstp/students/me/qualifying-exam/submit', payload, null);
 
-        if (attemptIdRef.current && typeof window !== 'undefined') {
-          sessionStorage.removeItem(`qualifying-exam-answers-${user.id}-${attemptIdRef.current}`);
+        if (res?.data) {
+          toast.dismiss('submit-busy-retry');
+          const finalScore = res.data.score ?? 0;
+          setScore(finalScore);
+          setSubmitted(true);
+
+          if (attemptIdRef.current && typeof window !== 'undefined') {
+            sessionStorage.removeItem(`qualifying-exam-answers-${user.id}-${attemptIdRef.current}`);
+          }
+
+          const examResult: QualifyingExamResult = {
+            userId: user.id,
+            userName: user.name,
+            userEmail: user.email,
+            preferredComponent,
+            score: finalScore,
+            assignedComponent: (res.data.assignedComponent as NstpComponent) || null,
+            status: res.data.status as QualifyingExamResult['status'],
+            timestamp: new Date().toISOString(),
+          };
+          setSubmissionResult(examResult);
+
+          toast.success('Exam submitted successfully.');
+          return;
+        } else {
+          toast.dismiss('submit-busy-retry');
+          toast.error('Unable to submit exam. Please try again.');
+          submittedRef.current = false;
+          return;
+        }
+      } catch (err: any) {
+        const is503 = (err instanceof ApiRequestError && err.status === 503) || err?.status === 503;
+        if (is503 && attempt < maxRetries - 1) {
+          attempt++;
+          toast.loading(`Server busy allocating slots; retrying submission (${attempt}/${maxRetries - 1})...`, {
+            id: 'submit-busy-retry',
+          });
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          continue;
         }
 
-        const examResult: QualifyingExamResult = {
-          userId: user.id,
-          userName: user.name,
-          userEmail: user.email,
-          preferredComponent,
-          score: finalScore,
-          assignedComponent: (res.data.assignedComponent as NstpComponent) || null,
-          status: res.data.status as QualifyingExamResult['status'],
-          timestamp: new Date().toISOString(),
-        };
-
-        const allResults = loadQualifyingExamResults();
-        const updatedResults = allResults.some((result) => result.userId === user.id)
-          ? allResults.map((result) => (result.userId === user.id ? examResult : result))
-          : [...allResults, examResult];
-
-        saveQualifyingExamResults(updatedResults);
-        syncStudentAccessFromQualifyingResult(examResult);
-        localStorage.setItem(`examResult-${user.id}`, JSON.stringify(examResult));
-        toast.success('Exam submitted successfully.');
-      } else {
-        toast.error('Unable to submit exam. Please try again.');
+        toast.dismiss('submit-busy-retry');
+        toast.error(err?.message || 'Could not submit exam. Please try again.');
+        // Failed: preserve answers in state and sessionStorage, allow student to retry
         submittedRef.current = false;
+        return;
       }
-    } catch (err: any) {
-      toast.error(err?.message || 'Could not submit exam. Please try again.');
-      submittedRef.current = false;
     }
   }, [preferredComponent, user.id, user.name, user.email]);
 
@@ -225,18 +241,14 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
                 <AlertCircle className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5 dark:text-yellow-300" />
                 <div className="text-left">
                   <p className="font-semibold text-yellow-900 mb-1 dark:text-yellow-100">
-                    {(() => {
-                      const saved = loadQualifyingExamResults().find((result) => result.userId === user.id);
-                      return saved?.assignedComponent ? 'Component Access Granted' : saved?.status === 'not-qualified' ? 'Qualifying Score Not Reached' : 'Awaiting Available Slot';
-                    })()}
+                    {submissionResult?.assignedComponent ? 'Component Access Granted' : submissionResult?.status === 'not-qualified' ? 'Qualifying Score Not Reached' : 'Awaiting Available Slot'}
                   </p>
                   <p className="text-sm text-yellow-800 dark:text-yellow-100">
                     {(() => {
-                      const saved = loadQualifyingExamResults().find((result) => result.userId === user.id);
-                      if (saved?.assignedComponent) {
-                        return <>You qualified for <strong>{saved.assignedComponent}</strong>. Continue to enter the student LMS for your assigned component.</>;
+                      if (submissionResult?.assignedComponent) {
+                        return <>You qualified for <strong>{submissionResult.assignedComponent}</strong>. Continue to enter the student LMS for your assigned component.</>;
                       }
-                      if (saved?.status === 'not-qualified') {
+                      if (submissionResult?.status === 'not-qualified') {
                         return <>Your preferred component is <strong>{preferredComponent}</strong>. The NSTP Coordinator may still review or manually approve your application.</>;
                       }
                       return <>Your preferred component is <strong>{preferredComponent}</strong>, but the slot queue is currently full. The NSTP Coordinator can manually approve or reassign your application.</>;
@@ -247,7 +259,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
             </div>
 
             <button
-              onClick={() => onComplete(finalScore, loadQualifyingExamResults().find((result) => result.userId === user.id))}
+              onClick={() => onComplete(finalScore, submissionResult || undefined)}
               className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium"
             >
               Continue
@@ -276,7 +288,19 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
           <div className="flex items-center justify-between mb-4">
             <div>
               <h1 className="text-2xl font-bold text-slate-900 mb-2 dark:text-slate-100">NSTP Qualifying Examination</h1>
-              <p className="text-slate-600 dark:text-slate-300">Preferred Component: <strong>{preferredComponent}</strong></p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-slate-600 dark:text-slate-300">Target Track: <strong>{preferredComponent}</strong></p>
+                {isCriminologyProgram(user.course || user.degreeProgram, user.school) && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+                    SCJE: Mandatory MTS (ROTC)
+                  </span>
+                )}
+                {isTeacherEducationProgram(user.course || user.degreeProgram, user.school) && (
+                  <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-200">
+                    STE: Mandatory LTS
+                  </span>
+                )}
+              </div>
             </div>
             <div className="flex items-center gap-2 text-orange-700 bg-orange-100 px-4 py-2 rounded-xl dark:bg-orange-500/15 dark:text-orange-200">
               <Clock className="w-5 h-5" />
@@ -289,9 +313,11 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
               <div className="text-sm text-blue-900 dark:text-blue-100">
                 <p className="font-semibold mb-1">Important Notice</p>
                 <p>
-                  Your exam score will determine your component placement. Students are ranked by score, and
-                  those with the highest scores in each component get priority enrollment based on available slots.
-                  If your preferred component is full, you will be assigned to another component with vacancies.
+                  {isCriminologyProgram(user.course || user.degreeProgram, user.school)
+                    ? 'Your score will place you into your preferred MTS branch (Army or Navy) subject to unit quota availability.'
+                    : isTeacherEducationProgram(user.course || user.degreeProgram, user.school)
+                    ? 'Your score will finalize your placement into the Literacy Training Service (LTS) field teaching roster.'
+                    : 'Your exam score will determine your component placement. Students are ranked by score, and those with the highest scores in each component get priority enrollment based on available slots.'}
                 </p>
               </div>
             </div>

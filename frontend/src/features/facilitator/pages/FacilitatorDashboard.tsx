@@ -31,14 +31,6 @@ import StatCard from '../../../components/common/StatCard';
 import DataTable, { type ColumnDef } from '../../../components/common/DataTable';
 import FacilitatorGradesView from '../components/FacilitatorGradesView';
 import {
-  loadAccounts,
-  loadAssessments,
-  loadAttendanceRecords,
-  loadAttendanceSessions,
-  loadPendingStudentRegistrations,
-  loadStudents,
-  saveAttendanceRecords,
-  saveAttendanceSessions,
   NSTP_COMPONENTS,
   PendingStudentRegistration,
   NstpAssessment,
@@ -46,8 +38,8 @@ import {
   NstpAttendanceSession,
   NstpStudent,
   AttendanceStatus,
-  replaceAssessmentsSnapshot,
 } from '../../../data/nstpData';
+import { useModules, useStudents } from '../../../hooks/index';
 import { fetchManagedAssessments } from '../../../services/assessments';
 
 const componentColors = ['#10b981', '#2563eb', '#f59e0b', '#8b5cf6', '#06b6d4'];
@@ -81,34 +73,33 @@ export default function FacilitatorDashboard({
   const [editSessionDate, setEditSessionDate] = useState('');
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
-    setStudents(loadStudents());
-    setAssessments(loadAssessments());
-    setAttendanceRecords(loadAttendanceRecords());
-    setAttendanceSessions(loadAttendanceSessions());
+  const { data: serverStudents = [] } = useStudents();
+  const { data: modules = [] } = useModules();
 
+  useEffect(() => {
+    setStudents(serverStudents);
+  }, [serverStudents]);
+
+  useEffect(() => {
     // Fetch live instructor attendance records from server
     apiGet<NstpAttendanceSession[]>('/nstp/instructors/attendance-sessions', [])
       .then((records) => {
-        if (Array.isArray(records) && records.length > 0) {
+        if (Array.isArray(records)) {
           setAttendanceSessions(records);
-          saveAttendanceSessions(records);
         }
       })
       .catch(() => {});
 
     apiGet<NstpAttendanceRecord[]>('/nstp/instructors/attendance-records', [])
       .then((records) => {
-        if (Array.isArray(records) && records.length > 0) {
+        if (Array.isArray(records)) {
           setAttendanceRecords(records);
-          saveAttendanceRecords(records);
         }
       })
       .catch(() => {});
 
     fetchManagedAssessments('facilitator').then((records) => {
       setAssessments(records);
-      replaceAssessmentsSnapshot(records);
     }).catch(() => { /* dashboard keeps the last display cache and never treats it as writable authority */ });
   }, []);
 
@@ -147,8 +138,6 @@ export default function FacilitatorDashboard({
     .filter((assessment) => assessment.ownerRole === 'facilitator' && (assessment.ownerId === user.id || assessment.ownerId === 'facilitator-1'))
     .slice(0, 4);
 
-  const modules = (() => { try { return JSON.parse(localStorage.getItem('nstp-module-library') || '[]'); } catch { return []; } })();
-
   const getRecentSaturdays = (count: number): string[] => {
     const dates: string[] = [];
     const current = new Date();
@@ -176,7 +165,6 @@ export default function FacilitatorDashboard({
     };
     const nextSessions = [...attendanceSessions, session].sort((a, b) => b.date.localeCompare(a.date));
     setAttendanceSessions(nextSessions);
-    saveAttendanceSessions(nextSessions);
     apiPost('/nstp/instructors/attendance-sessions', session)
       .then(() => toast.success('Attendance session saved to server.'))
       .catch((err) => console.warn('Could not sync session to server:', err));
@@ -203,7 +191,6 @@ export default function FacilitatorDashboard({
         : s
     );
     setAttendanceSessions(nextSessions);
-    saveAttendanceSessions(nextSessions);
     apiPost('/nstp/instructors/attendance-sessions', updated)
       .then(() => toast.success('Session updated.'))
       .catch((err) => console.warn('Could not update session on server:', err));
@@ -219,8 +206,6 @@ export default function FacilitatorDashboard({
     const nextRecords = attendanceRecords.filter((r) => r.sessionId !== sessionId);
     setAttendanceSessions(nextSessions);
     setAttendanceRecords(nextRecords);
-    saveAttendanceSessions(nextSessions);
-    saveAttendanceRecords(nextRecords);
     apiDel(`/nstp/instructors/attendance-sessions/${sessionId}`, null)
       .then(() => toast.success('Session deleted.'))
       .catch((err) => console.warn('Could not delete session on server:', err));
@@ -257,7 +242,6 @@ export default function FacilitatorDashboard({
       nextRecords = [...attendanceRecords, targetRecord];
     }
     setAttendanceRecords(nextRecords);
-    saveAttendanceRecords(nextRecords);
     apiPost('/nstp/instructors/attendance-records', {
       id: targetRecord.id,
       studentId: studentKey,
@@ -717,13 +701,13 @@ export default function FacilitatorDashboard({
                   emptyMessage="No assigned students found"
                   emptySubtext="Students will appear here once officially enrolled by the administrator."
                   actionSlot={
-                    <div className="flex items-center gap-2">
-                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300">
+                    <div className="flex flex-wrap items-center gap-2 shrink-0">
+                      <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-300 shrink-0">
                         {scopedStudents.length} enrolled
                       </span>
                       <button
                         onClick={() => setView('dashboard')}
-                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                        className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 shrink-0 cursor-pointer"
                       >
                         <ChevronDown className="h-3.5 w-3.5 rotate-90" />
                         Back
@@ -751,7 +735,7 @@ export default function FacilitatorDashboard({
                   actionSlot={
                     <button
                       onClick={() => setView('dashboard')}
-                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                      className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 shrink-0 cursor-pointer"
                     >
                       <ChevronDown className="h-3.5 w-3.5 rotate-90" />
                       Back
@@ -776,8 +760,8 @@ export default function FacilitatorDashboard({
                   </div>
                 </div>
 
-                <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900 sm:flex-row sm:items-end">
-                  <div className="flex-1">
+                <div className="mb-6 grid grid-cols-1 md:grid-cols-[1fr_200px_auto] gap-3 items-end w-full rounded-2xl border border-slate-100 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-900">
+                  <div className="min-w-0 w-full">
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Session Title</label>
                     <input
                       value={newSessionTitle}
@@ -786,7 +770,7 @@ export default function FacilitatorDashboard({
                       className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-blue-400 dark:border-slate-700 dark:bg-slate-950"
                     />
                   </div>
-                  <div className="sm:w-48">
+                  <div className="min-w-0 w-full">
                     <label className="mb-1 block text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Session Date</label>
                     <input
                       type="date"
@@ -797,7 +781,7 @@ export default function FacilitatorDashboard({
                   </div>
                   <button
                     onClick={createAttendanceSession}
-                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white hover:bg-blue-800"
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-blue-700 px-5 text-sm font-semibold text-white hover:bg-blue-800 shrink-0 cursor-pointer"
                   >
                     <Check className="h-4 w-4" />
                     Add Session
@@ -959,11 +943,11 @@ export default function FacilitatorDashboard({
 
             {view === 'reports' && (
               <section className="space-y-5">
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex w-full flex-wrap items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <button
                       onClick={() => setView('dashboard')}
-                      className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300"
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 cursor-pointer"
                     >
                       <ChevronDown className="h-4 w-4 rotate-90" />
                     </button>
@@ -974,25 +958,27 @@ export default function FacilitatorDashboard({
                   </div>
                   <button
                     onClick={exportReportsPdf}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800"
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-blue-700 px-4 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-800 shrink-0 cursor-pointer"
                   >
                     <Download className="h-4 w-4" />
                     Export PDF
                   </button>
                 </div>
-                <section className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(320px,0.75fr)]">
-                  <DataTable
-                    title="Recent Assessments"
-                    subtitle={`${recentAssessments.length} total assessments in scope.`}
-                    data={recentAssessments}
-                    columns={assessmentColumns}
-                    keyExtractor={(a) => a.id}
-                    emptyMessage="No assessments recorded"
-                    emptySubtext="No assessment activity found for this cohort."
-                  />
-                  <article className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
+                <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+                  <div className="lg:col-span-7 min-w-0 w-full">
+                    <DataTable
+                      title="Recent Assessments"
+                      subtitle={`${recentAssessments.length} total assessments in scope.`}
+                      data={recentAssessments}
+                      columns={assessmentColumns}
+                      keyExtractor={(a) => a.id}
+                      emptyMessage="No assessments recorded"
+                      emptySubtext="No assessment activity found for this cohort."
+                    />
+                  </div>
+                  <article className="lg:col-span-5 min-w-0 w-full rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <h2 className="mb-4 text-lg font-semibold text-slate-950 dark:text-white">Grade Distribution</h2>
-                    <div className="h-64 min-h-64 min-w-0">
+                    <div className="h-64 min-h-64 w-full min-w-0">
                       <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                         <BarChart data={gradeDistribution} margin={{ top: 12, right: 8, left: -18, bottom: 0 }}>
                           <XAxis dataKey="range" tickLine={false} axisLine={false} fontSize={12} />
@@ -1060,7 +1046,7 @@ export default function FacilitatorDashboard({
               <button
                 type="button"
                 onClick={toggleTheme}
-                className="grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                className="grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:border-blue-200 hover:text-blue-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 shrink-0 cursor-pointer"
                 aria-label="Toggle theme"
               >
                 <Moon className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -1068,7 +1054,7 @@ export default function FacilitatorDashboard({
               <button
                 type="button"
                 onClick={() => setView('students')}
-                className="relative grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200"
+                className="relative grid h-9 w-9 sm:h-10 sm:w-10 place-items-center rounded-xl border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200 shrink-0 cursor-pointer"
                 aria-label="View notifications"
               >
                 <Bell className="h-4 w-4 sm:h-5 sm:w-5" />
@@ -1078,11 +1064,11 @@ export default function FacilitatorDashboard({
                   </span>
                 ) : null}
               </button>
-              <div className="flex h-9 sm:h-10 items-center gap-2 sm:gap-2.5 rounded-xl border border-slate-200 bg-white px-2 sm:px-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950">
-                <span className="grid h-6 w-6 sm:h-7 sm:w-7 place-items-center rounded-full bg-blue-700 text-xs font-semibold text-white">
+              <div className="flex h-9 sm:h-10 items-center gap-2 sm:gap-2.5 rounded-xl border border-slate-200 bg-white px-2 sm:px-2.5 shadow-sm dark:border-slate-700 dark:bg-slate-950 shrink-0 max-w-[180px]">
+                <span className="grid h-6 w-6 sm:h-7 sm:w-7 shrink-0 place-items-center rounded-full bg-blue-700 text-xs font-semibold text-white">
                   {initials(user.name)}
                 </span>
-                <span className="hidden text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-100 sm:block">
+                <span className="hidden text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-100 sm:block truncate">
                   {user.name}
                 </span>
               </div>

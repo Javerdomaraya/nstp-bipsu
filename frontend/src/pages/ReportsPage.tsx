@@ -15,7 +15,8 @@ import {
   Line,
   Legend,
 } from 'recharts';
-import { loadAccounts, loadAssessments, loadModules, loadStudents, loadTrainingGroups, NstpAccount, NstpAssessment, NstpComponent, NstpModule, NstpStudent, NstpTrainingGroup, UNASSIGNED_COMPONENT_LABEL } from '../data/nstpData';
+import { NstpAccount, NstpAssessment, NstpComponent, NstpModule, NstpStudent, NstpTrainingGroup, UNASSIGNED_COMPONENT_LABEL } from '../data/nstpData';
+import { useStudents, useModules, useAssessments, useAccounts, useTrainingGroups } from '../hooks/index';
 import { createXlsxWorkbook } from '../utils/xlsxExport';
 import { apiGet } from '../services/apiClient';
 import { fetchAdminGrades, fetchCoordinatorGrades, type SemesterGrade } from '../services/grades';
@@ -48,30 +49,6 @@ type ReportSource = {
 const EMPTY_REPORT_SOURCE: ReportSource = {
   students: [], modules: [], assessments: [], facilitators: [], trainingGroups: [],
 };
-
-/**
- * Reads the client snapshot store that `syncAllFromApi` populates from the
- * `/nstp/admin/*` endpoints.
- *
- * Called from exactly one place: the non-coordinator branch of the ternary in
- * `ReportsCenter`. That structure is the point. The loaders used to be invoked
- * unconditionally at the top of the component and the results discarded for
- * coordinators, which meant a coordinator's render did read admin-scoped
- * localStorage — harmless only for as long as nobody wired one of those values
- * into a coordinator code path by mistake. Keeping the calls inside this function
- * makes "a coordinator never reads the admin snapshot" a property of the control
- * flow rather than a promise in a comment.
- */
-function loadSnapshotReportSource(): ReportSource {
-  return {
-    students: loadStudents(),
-    modules: loadModules(),
-    assessments: loadAssessments(),
-    facilitators: loadAccounts().filter((account) => account.role === 'facilitator'),
-    trainingGroups: loadTrainingGroups(),
-  };
-}
-
 export default function ReportsCenter({ user }: { user: AuthenticatedUser }) {
   const [profile, setProfile] = useState<ReportProfile>('executive');
   const [studentReportTab, setStudentReportTab] = useState<StudentReportTab>('overview');
@@ -79,6 +56,20 @@ export default function ReportsCenter({ user }: { user: AuthenticatedUser }) {
 
   const isCoordinator = user.role === 'coordinator';
   const coordinatorScope = useCoordinatorScope(isCoordinator ? user : null);
+
+  const { data: serverStudents = [] } = useStudents();
+  const { data: serverModules = [] } = useModules();
+  const { data: serverAssessments = [] } = useAssessments();
+  const { data: serverAccounts = [] } = useAccounts();
+  const { data: serverTrainingGroups = [] } = useTrainingGroups();
+
+  const adminData: ReportSource = useMemo(() => ({
+    students: serverStudents,
+    modules: serverModules,
+    assessments: serverAssessments,
+    facilitators: serverAccounts.filter((account) => account.role === 'facilitator'),
+    trainingGroups: serverTrainingGroups,
+  }), [serverStudents, serverModules, serverAssessments, serverAccounts, serverTrainingGroups]);
 
   const [coordinatorData, setCoordinatorData] = useState<ReportSource>(EMPTY_REPORT_SOURCE);
   const [coordinatorLoading, setCoordinatorLoading] = useState(isCoordinator);
@@ -135,7 +126,7 @@ export default function ReportsCenter({ user }: { user: AuthenticatedUser }) {
   // their session is entitled to.
   const { students, modules, assessments, facilitators, trainingGroups } = isCoordinator
     ? coordinatorData
-    : loadSnapshotReportSource();
+    : adminData;
 
   useEffect(() => {
     const schoolYear = getCurrentAcademicYear();

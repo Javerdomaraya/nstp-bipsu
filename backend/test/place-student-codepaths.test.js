@@ -58,7 +58,9 @@ test('upsertAdminResource for students routes placement through placeStudent to 
     return { id: 'sp-admin-created', ...data };
   };
 
+  prisma.componentApplicationState.findFirst = async () => null;
   prisma.enrollment.findFirst = async () => null;
+  prisma.enrollment.updateMany = async () => ({ count: 0 });
   prisma.enrollment.create = async ({ data }) => {
     createdEnrollment = data;
     return { id: 'enr-admin-created', ...data };

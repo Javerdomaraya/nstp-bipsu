@@ -10,11 +10,12 @@ import {
   createAssessmentSchema, createModuleSchema, nstpBatchSchema,
   overrideAssessmentAttemptSchema, submitAssessmentSchema,
   startQualifyingExamSchema, submitQualifyingExamSchema,
-  updateAssessmentSchema, updateModuleSchema,
+  updateAssessmentSchema, updateModuleSchema, voidQualifyingExamAttemptSchema,
 } from '../../middleware/validationSchemas.js';
 import {
   getCurrentCoordinator, getCurrentInstructor, getCurrentStudent,
   requireAssignedSection, requireStudentInAssignedSection,
+  getCurrentStaffContext,
 } from './nstp.authorization.js';
 import {
   adminAccounts, adminAttendanceRecords, adminAttendanceSessions,
@@ -28,12 +29,20 @@ import {
   listAdminModules, createAdminModule, updateAdminModule, removeAdminModule,
   listCoordinatorModules, createCoordinatorModule, updateCoordinatorModule, removeCoordinatorModule,
   listStudentModules, listInstructorModules,
+  listStaffModules, createStaffModule, updateStaffModule, removeStaffModule,
   listAdminAssessments, createAdminAssessment, updateAdminAssessment, removeAdminAssessment,
   listCoordinatorAssessments, createCoordinatorAssessment, updateCoordinatorAssessment, removeCoordinatorAssessment,
   listInstructorAssessments, createInstructorAssessment, updateInstructorAssessment, removeInstructorAssessment,
-  listMyAssessments, listAdminAssessmentAttempts, overrideAdminAssessmentAttempt, adminVoidQualifyingExamAttempt,
+  listStaffAssessments, createStaffAssessment, updateStaffAssessment, removeStaffAssessment,
+  listMyAssessments, listAdminAssessmentAttempts, overrideAdminAssessmentAttempt,
+  listAdminQualifyingExamAttempts, adminVoidQualifyingExamAttempt,
   listInstructorAttendanceSessions, upsertInstructorAttendanceSession, removeInstructorAttendanceSession,
   listInstructorAttendanceRecords, upsertInstructorAttendanceRecord,
+  listStaffAttendanceSessions, listStaffAttendanceRecords,
+  patchAdminStudentController,
+  listAnnouncementsController,
+  createAnnouncementController,
+  deleteAnnouncementController,
 } from './nstp.controller.js';
 
 const router = Router();
@@ -41,6 +50,7 @@ router.use('/', staffRouter);
 router.use('/', gradesRouter);
 router.use('/admin/profile-templates', profileTemplatesRouter);
 const admin = [authenticate, requireRole('ADMIN')];
+const staff = [authenticate, requireRole('ADMIN', 'COORDINATOR', 'INSTRUCTOR')];
 
 function adminResource(path, handlers) {
   router.get(`/admin/${path}`, ...admin, asyncHandler(handlers.list));
@@ -53,22 +63,37 @@ function adminResource(path, handlers) {
 // model/collection through a URL parameter.
 adminResource('accounts', adminAccounts);
 adminResource('students', adminStudents);
+router.patch('/admin/students/:id', ...admin, strictWriteLimiter, asyncHandler(patchAdminStudentController));
+
 router.get('/admin/modules', ...admin, asyncHandler(listAdminModules));
 router.post('/admin/modules', ...admin, strictWriteLimiter, validateRequest(createModuleSchema), asyncHandler(createAdminModule));
 router.patch('/admin/modules/:id', ...admin, strictWriteLimiter, validateRequest(updateModuleSchema), asyncHandler(updateAdminModule));
 router.delete('/admin/modules/:id', ...admin, strictWriteLimiter, asyncHandler(removeAdminModule));
+
 router.get('/admin/assessments', ...admin, asyncHandler(listAdminAssessments));
 router.post('/admin/assessments', ...admin, strictWriteLimiter, validateRequest(createAssessmentSchema), asyncHandler(createAdminAssessment));
 router.patch('/admin/assessments/:id', ...admin, strictWriteLimiter, validateRequest(updateAssessmentSchema), asyncHandler(updateAdminAssessment));
 router.delete('/admin/assessments/:id', ...admin, strictWriteLimiter, asyncHandler(removeAdminAssessment));
+
 router.get('/admin/assessment-attempts', ...admin, asyncHandler(listAdminAssessmentAttempts));
 router.post('/admin/assessment-attempts/:id/override', ...admin, strictWriteLimiter, validateRequest(overrideAssessmentAttemptSchema), asyncHandler(overrideAdminAssessmentAttempt));
 adminResource('pending-registrations', adminPendingRegistrations);
 adminResource('training-groups', adminTrainingGroups);
-adminResource('attendance-records', adminAttendanceRecords);
-adminResource('attendance-sessions', adminAttendanceSessions);
+
+// Attendance records & sessions: Staff read access
+router.get('/admin/attendance-records', ...staff, asyncHandler(getCurrentStaffContext), asyncHandler(listStaffAttendanceRecords));
+router.post('/admin/attendance-records', ...staff, strictWriteLimiter, rejectProhibitedCredentialFields, asyncHandler(adminAttendanceRecords.upsert));
+router.post('/admin/attendance-records/batch', ...staff, strictWriteLimiter, rejectProhibitedCredentialFields, validateRequest(nstpBatchSchema), asyncHandler(adminAttendanceRecords.batch));
+router.delete('/admin/attendance-records/:id', ...staff, strictWriteLimiter, asyncHandler(adminAttendanceRecords.remove));
+
+router.get('/admin/attendance-sessions', ...staff, asyncHandler(getCurrentStaffContext), asyncHandler(listStaffAttendanceSessions));
+router.post('/admin/attendance-sessions', ...staff, strictWriteLimiter, rejectProhibitedCredentialFields, asyncHandler(adminAttendanceSessions.upsert));
+router.post('/admin/attendance-sessions/batch', ...staff, strictWriteLimiter, rejectProhibitedCredentialFields, validateRequest(nstpBatchSchema), asyncHandler(adminAttendanceSessions.batch));
+router.delete('/admin/attendance-sessions/:id', ...staff, strictWriteLimiter, asyncHandler(adminAttendanceSessions.remove));
+
 adminResource('qualifying-results', adminQualifyingResults);
-router.post('/admin/qualifying-exam/attempts/:id/void', ...admin, strictWriteLimiter, asyncHandler(adminVoidQualifyingExamAttempt));
+router.get('/admin/qualifying-exam/attempts', ...admin, asyncHandler(listAdminQualifyingExamAttempts));
+router.post('/admin/qualifying-exam/attempts/:id/void', ...admin, strictWriteLimiter, validateRequest(voidQualifyingExamAttemptSchema), asyncHandler(adminVoidQualifyingExamAttempt));
 adminResource('component-state', adminComponentState);
 adminResource('audit-log', adminAuditLog);
 router.get('/admin/summary', ...admin, asyncHandler(getAdminSummaryController));
@@ -108,5 +133,9 @@ router.delete('/coordinators/assessments/:id', authenticate, requireRole('COORDI
 router.post('/coordinators/modules', authenticate, requireRole('COORDINATOR'), strictWriteLimiter, asyncHandler(getCurrentCoordinator), validateRequest(createModuleSchema), asyncHandler(createCoordinatorModule));
 router.patch('/coordinators/modules/:id', authenticate, requireRole('COORDINATOR'), strictWriteLimiter, asyncHandler(getCurrentCoordinator), validateRequest(updateModuleSchema), asyncHandler(updateCoordinatorModule));
 router.delete('/coordinators/modules/:id', authenticate, requireRole('COORDINATOR'), strictWriteLimiter, asyncHandler(getCurrentCoordinator), asyncHandler(removeCoordinatorModule));
+
+router.get('/announcements', authenticate, asyncHandler(listAnnouncementsController));
+router.post('/announcements', authenticate, requireRole('ADMIN', 'COORDINATOR', 'INSTRUCTOR'), strictWriteLimiter, asyncHandler(createAnnouncementController));
+router.delete('/announcements/:id', authenticate, requireRole('ADMIN', 'COORDINATOR', 'INSTRUCTOR'), strictWriteLimiter, asyncHandler(deleteAnnouncementController));
 
 export default router;
