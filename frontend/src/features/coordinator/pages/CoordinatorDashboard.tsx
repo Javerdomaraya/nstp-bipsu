@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  BarChart3, Bell, BookOpen, CalendarCheck, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Loader2, Menu, Plus, Save, Search, Settings, ShieldAlert, Trash2, Upload, UserCog, Users, X,
+  BarChart3, Bell, BookOpen, CalendarCheck, CalendarDays, Check, ChevronDown, ClipboardList, Download, FileText, LayoutDashboard, Loader2, Menu, Plus, Save, Search, Settings, Shield, ShieldAlert, Trash2, Upload, UserCog, UserPlus, Users, X,
 } from 'lucide-react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
@@ -343,17 +343,74 @@ export default function CoordinatorDashboard({
   const renderDashboard = () => (
     <div className="space-y-4 sm:space-y-5">
       {renderDataNotice()}
+
+      <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-[#061A3A] via-[#0B3D91] to-[#0B3D91] p-5 text-white shadow-md shadow-slate-200/50 dark:border-slate-800 dark:shadow-none">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-blue-100 backdrop-blur-sm border border-white/20">
+                Coordinator Workspace
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/25 px-2.5 py-0.5 text-xs font-semibold text-blue-200 border border-blue-400/30">
+                <Shield className="h-3 w-3" />
+                {userComponent}
+              </span>
+            </div>
+            <h1 className="mt-2.5 text-2xl font-bold tracking-tight sm:text-3xl">
+              Welcome, {user.name}!
+            </h1>
+            <p className="mt-1 text-xs text-blue-100/90 sm:text-sm max-w-2xl">
+              Supervise {userComponent} curriculum modules, active facilitators, student enrollment, and field attendance.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <button
+              type="button"
+              onClick={handleNewModule}
+              className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs sm:text-sm font-bold text-blue-900 shadow-sm transition hover:bg-blue-50 active:scale-95 cursor-pointer"
+            >
+              <Plus className="h-4 w-4 text-blue-700" />
+              <span>New Module</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleNewFacilitator}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 py-2.5 text-xs sm:text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/20 active:scale-95 cursor-pointer"
+            >
+              <UserPlus className="h-4 w-4" />
+              <span>Add Facilitator</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setView('attendance')}
+              className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 py-2.5 text-xs sm:text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/20 active:scale-95 cursor-pointer"
+            >
+              <CalendarDays className="h-4 w-4" />
+              <span>Audit Attendance</span>
+            </button>
+          </div>
+        </div>
+      </section>
+
       <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
         {[
-          { label: 'Modules', value: scopedModules.length, detail: `For ${userComponent}`, icon: BookOpen, tone: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200' },
-          { label: 'Facilitators', value: scopedFacilitators.filter((facilitator) => facilitator.accountStatus !== 'SUSPENDED').length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200' },
-          { label: 'Students', value: scopedStudents.length, detail: `Enrolled in ${userComponent}`, icon: UserCog, tone: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-200' },
-          { label: 'Classes', value: scopedClasses.length, detail: `Sections in ${userComponent}`, icon: ClipboardList, tone: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-200' },
-          { label: 'Assessments', value: assessmentCount, detail: 'In the library', icon: ClipboardList, tone: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200' },
+          { label: 'Modules', value: scopedModules.length, detail: `For ${userComponent}`, icon: BookOpen, tone: 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-200', target: 'modules' as CoordinatorView },
+          { label: 'Facilitators', value: scopedFacilitators.filter((facilitator) => facilitator.accountStatus !== 'SUSPENDED').length, detail: 'Active facilitators', icon: Users, tone: 'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/10 dark:text-emerald-200', target: 'facilitators' as CoordinatorView },
+          { label: 'Students', value: scopedStudents.length, detail: `Enrolled in ${userComponent}`, icon: UserCog, tone: 'bg-violet-50 text-violet-700 dark:bg-violet-500/10 dark:text-violet-200', target: 'students' as CoordinatorView },
+          { label: 'Classes', value: scopedClasses.length, detail: `Sections in ${userComponent}`, icon: ClipboardList, tone: 'bg-sky-50 text-sky-700 dark:bg-sky-500/10 dark:text-sky-200', target: 'classes' as CoordinatorView },
+          { label: 'Assessments', value: assessmentCount, detail: 'In the library', icon: ClipboardList, tone: 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-200', target: 'reports' as CoordinatorView },
         ].map((stat, idx) => {
           const Icon = stat.icon;
           return (
-            <div key={stat.label} className={`rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm dark:border-slate-800 dark:bg-slate-950 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}>
+            <div
+              key={stat.label}
+              onClick={() => setView(stat.target)}
+              role="button"
+              tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && setView(stat.target)}
+              className={`rounded-2xl border border-slate-200 bg-white p-3 sm:p-4 shadow-sm cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-blue-300 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-blue-700 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}
+            >
               <div className="flex items-center gap-2.5 sm:gap-4">
                 <span className={`grid h-10 w-10 sm:h-11 sm:w-11 shrink-0 place-items-center rounded-xl sm:rounded-2xl ${stat.tone}`}>
                   <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
@@ -1147,7 +1204,7 @@ export default function CoordinatorDashboard({
                         <input type="checkbox" checked={selected} onChange={(e) => {
                           const current = editingFacilitator.municipalities || [];
                           setEditingFacilitator({ ...editingFacilitator, municipalities: e.target.checked ? [...current, item] : current.filter((m) => m !== item) });
-                        }} disabled={unavailable} className="h-4 w-4 rounded border-slate-300 text-blue-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" />
+                        }} disabled={unavailable} className="h-4 w-4 rounded border-slate-300 text-blue-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600" />
                         {item}
                       </label>
                     );

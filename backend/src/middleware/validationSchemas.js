@@ -51,6 +51,8 @@ export const updateProfileSchema = z.object({
       title: z.string().optional(),
       subtitle: z.string().optional(),
       contactNumber: z.string().optional(),
+      generalEducationComplete: z.boolean().optional(),
+      preferredComponent: z.string().optional(),
     }).strict().optional(),
   }).strict(),
   params: z.object({}).optional(),

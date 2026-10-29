@@ -94,11 +94,11 @@ export const COORDINATOR_ACCOUNTS = [
 
 export const SEEDED_CREDENTIALS = {
   admin: {
-    identifier: 'director@bipsu.edu.ph',
+    identifier: 'admin@bipsu.edu.ph',
     password: SEEDED_PASSWORD,
     title: 'NSTP Director & Dean',
     badge: 'Institutional Governor',
-    name: 'Dr. NSTP Director',
+    name: 'Dr. Reynold G. Bustillo',
     features: ['Institutional KPIs & Biliran Municipality Overview'],
   },
   coordinator: {

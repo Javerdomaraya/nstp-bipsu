@@ -142,12 +142,17 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
   // these same bars as a generic "not applicable" baseline (35/20/50), which is
   // exactly what the falsy branches produce when there is no student to read.
   const studentUser = user.role === 'student' ? user : null;
+  const firstName = user.name?.split(' ')[0] || (role === 'student' ? 'Student' : 'User');
+  const commonModuleHours = modules.filter((m) => !m.component || m.component === 'Common').reduce((sum, m) => sum + m.hours, 0);
   const studentMilestones = [
-    { label: 'General Education', value: studentUser?.generalEducationComplete ? 100 : 35 },
+    { label: 'General Education', value: studentUser?.generalEducationComplete ? 100 : Math.min(95, Math.round((commonModuleHours / 25) * 100)) },
     { label: 'Component Exam', value: studentUser?.examTaken ? 100 : 20 },
     { label: 'Classification', value: user.component ? 100 : 50 },
     { label: 'Grade Release', value: studentGrade ? 100 : 35 },
   ];
+  const overallMilestoneProgress = role === 'student'
+    ? Math.min(100, Math.round(studentMilestones.reduce((acc, m) => acc + m.value, 0) / studentMilestones.length))
+    : 100;
   const primaryBarData = role === 'facilitator'
     ? facilitatorChartData
     : studentMilestones.map((item) => ({ name: item.label, value: item.value, fill: '#2563eb' }));
@@ -178,10 +183,10 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
         { title: 'Access Level', value: 'Limited', detail: 'No records or grades', icon: ShieldCheck },
       ]
       : [
-        { title: 'Common Module', value: 'In Progress', detail: `${modules.length} modules available`, icon: BookOpen, target: 'modules' },
-        { title: 'Assessments', value: publishedAssessments.length ? 'Open' : 'Pending', detail: `${publishedAssessments.length} published`, icon: ClipboardList, target: 'assessments' },
-        { title: 'Component', value: user.component || 'Pending', detail: 'Official assignment', icon: ShieldCheck, target: 'progress' },
-        { title: 'NSTP Grade', value: studentGrade ? String(studentAverage || 'Released') : 'Pending', detail: studentGrade?.remarks || 'For release', icon: Award, target: 'grades' },
+        { title: 'Common Modules', value: `${studentUser?.generalEducationComplete ? 25 : Math.min(25, commonModuleHours)}/25 hrs`, detail: studentUser?.generalEducationComplete ? 'Requirement completed' : `${Math.max(0, 25 - commonModuleHours)} hrs remaining`, icon: BookOpen, target: 'modules' },
+        { title: 'Assessments', value: publishedAssessments.length ? `${publishedAssessments.length} Ready` : 'Upcoming', detail: `${publishedAssessments.length} published tests`, icon: ClipboardList, target: 'assessments' },
+        { title: 'Component Track', value: user.component || 'Pending', detail: user.component ? 'Official assignment' : 'Classification pending', icon: ShieldCheck, target: 'progress' },
+        { title: 'Official Standing', value: studentGrade ? `${studentGrade.percentGrade}%` : 'In Progress', detail: studentGrade?.remarks || 'Standing clearance', icon: Award, target: 'grades' },
       ];
 
   const workflow = role === 'admin'
@@ -347,8 +352,32 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
                 <ShieldCheck className="h-8 w-8" />
               </div>
               <p className="text-xs font-semibold uppercase tracking-[0.18em] text-white/75">{copy.eyebrow}</p>
-              <h1 className="mt-2 max-w-3xl text-2xl font-bold leading-tight md:text-4xl">{copy.title}</h1>
-              <p className="mt-3 max-w-3xl text-sm font-medium leading-6 text-white/85 md:text-base">{copy.body}</p>
+              <h1 className="mt-2 max-w-3xl text-2xl font-bold leading-tight md:text-4xl">
+                {role === 'student' ? `Welcome back, ${firstName}! 👋` : copy.title}
+              </h1>
+              <p className="mt-3 max-w-3xl text-sm font-medium leading-6 text-white/85 md:text-base">
+                {role === 'student'
+                  ? 'Track your common module hours, assessment readiness, component classification, and academic grades in your official NSTP portal.'
+                  : copy.body}
+              </p>
+              {role === 'student' && (
+                <div className="mt-5 flex flex-wrap items-center gap-2.5 text-xs font-semibold">
+                  {studentUser?.degreeProgram && (
+                    <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 backdrop-blur-sm border border-white/20">
+                      <GraduationCap className="h-4 w-4" />
+                      {studentUser.degreeProgram}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 backdrop-blur-sm border border-white/20">
+                    <ShieldCheck className="h-4 w-4" />
+                    {user.component ? `Component: ${user.component}` : 'Component: Pending'}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 rounded-lg bg-white/15 px-3 py-1.5 backdrop-blur-sm border border-white/20">
+                    <CalendarDays className="h-4 w-4" />
+                    AY {activeAcademicYear}
+                  </span>
+                </div>
+              )}
               {role === 'admin' && (
                 <div className="mt-6 flex flex-wrap gap-4 text-xs font-semibold text-white/85">
                   <span className="inline-flex items-center gap-2"><CalendarDays className="h-4 w-4" />{getCurrentSchoolYear()}</span>
@@ -380,6 +409,40 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
             </div>
           </div>
         </section>
+
+        {role === 'student' && (
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 rounded-2xl border border-blue-200/80 bg-gradient-to-r from-blue-50 to-indigo-50/60 p-4 sm:p-5 shadow-sm dark:border-blue-900/40 dark:from-slate-900 dark:to-blue-950/30">
+            <div className="flex items-center gap-3.5">
+              <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-blue-600 text-white shadow-md shadow-blue-500/20">
+                <Target className="h-6 w-6" />
+              </div>
+              <div>
+                <p className="text-xs font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Current Objective</p>
+                <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100">
+                  {!studentUser?.generalEducationComplete
+                    ? 'Complete 25 Contact Hours of Common Modules'
+                    : !user.component
+                    ? 'Awaiting Official Component Placement'
+                    : `${user.component} — Continue Component Coursework`}
+                </h3>
+                <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300">
+                  {!studentUser?.generalEducationComplete
+                    ? 'Attend seminars and complete common orientation modules to qualify for NSTP track placement.'
+                    : !user.component
+                    ? 'Your qualifying exam score has been recorded. Review status while coordinators balance slots.'
+                    : 'Access published learning modules, post-module assessments, and class sessions.'}
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => onNavigate?.(!studentUser?.generalEducationComplete ? 'modules' : !user.component ? 'progress' : 'modules')}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-blue-700 px-5 py-2.5 text-sm font-bold text-white shadow-sm transition hover:bg-blue-800 cursor-pointer active:scale-95"
+            >
+              <span>{!studentUser?.generalEducationComplete ? 'Go to Modules' : !user.component ? 'View Placement' : 'Start Learning'}</span>
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        )}
 
         <section className={`grid gap-3 sm:grid-cols-2 ${role === 'admin' ? 'xl:grid-cols-5' : 'xl:grid-cols-4'}`}>
           {kpis.map((card) => {
@@ -433,9 +496,9 @@ export default function RoleDashboardHome({ user, role, onNavigate }: RoleDashbo
             <div className="mt-5 flex items-center gap-3">
               <span className="text-sm font-semibold text-slate-700 dark:text-slate-200">Overall Progress</span>
               <span className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
-                <span className="block h-full w-full rounded-full bg-emerald-500" />
+                <span className="block h-full rounded-full bg-emerald-500 transition-all duration-500" style={{ width: `${overallMilestoneProgress}%` }} />
               </span>
-              <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-300">100%</span>
+              <span className="text-sm font-semibold text-emerald-600 dark:text-emerald-300">{overallMilestoneProgress}%</span>
             </div>
           </div>
 

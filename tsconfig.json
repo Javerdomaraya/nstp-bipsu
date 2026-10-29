@@ -1,0 +1,14 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "skipLibCheck": true
+  },
+  "references": [
+    { "path": "./frontend" }
+  ],
+  "exclude": ["node_modules"]
+}

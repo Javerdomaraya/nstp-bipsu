@@ -10,7 +10,6 @@ All accounts in this directory are seeded directly into Neon PostgreSQL via `bac
 
 | Full Name | Role | Email | Password | Scope / Title | Municipality |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Dr. NSTP Director** | `ADMIN` | `director@bipsu.edu.ph` | `Password123!` | NSTP Director | Naval (Main Campus) |
 | **Dr. Reynold G. Bustillo** | `ADMIN` | `admin@bipsu.edu.ph` | `Password123!` | NSTP Director & Dean | Naval (Main Campus) |
 
 ---
@@ -22,8 +21,6 @@ All accounts in this directory are seeded directly into Neon PostgreSQL via `bac
 | **Prof. Maria Santos** | `COORDINATOR` | `coord.cwts@bipsu.edu.ph` | `Password123!` | **CWTS** (Civic Welfare Training Service & Coast Guard) |
 | **Prof. Elena Rivera** | `COORDINATOR` | `coord.lts@bipsu.edu.ph` | `Password123!` | **LTS** (Literacy Training Service) |
 | **Maj. Roberto Garcia** | `COORDINATOR` | `coord.mts@bipsu.edu.ph` | `Password123!` | **MTS / ROTC** (Army & Navy Tracks) |
-
-*Legacy aliases available: `coordinator.cwts@bipsu.edu.ph`, `coordinator.lts@bipsu.edu.ph`, `coordinator.mts@bipsu.edu.ph`*
 
 ---
 

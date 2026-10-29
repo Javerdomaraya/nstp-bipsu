@@ -76,6 +76,7 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
   const handleSubmit = useCallback(async () => {
     if (submittedRef.current) return;
     submittedRef.current = true;
+    setConfirmModalOpen(false);
 
     const payload = {
       attemptId: attemptIdRef.current,

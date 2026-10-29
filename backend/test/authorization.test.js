@@ -389,3 +389,37 @@ test('logout clears the session cookie', async () => {
   assert.equal(response.status, 204);
   assert.match(response.headers.get('set-cookie') || '', /Expires=Thu, 01 Jan 1970/i);
 });
+
+test('PUT /auth/me accepts student funnel progress data and rejects unknown fields', async () => {
+  let updatedUserData = null;
+  const mockUser = ({ where }) => ({
+    id: 'student-funnel-user', name: 'Funnel Student', email: 'funnel@example.test', role: 'STUDENT',
+    data: {}, studentProfile: { studentNumber: '2026-0003' },
+  });
+  prisma.user.findUnique = async (args) => mockUser(args);
+  prisma.user.findFirst = async (args) => mockUser(args);
+  prisma.user.update = async (args) => {
+    updatedUserData = args.data;
+    return { ...mockUser(args), ...args.data };
+  };
+
+  // 1. Valid funnel progress update
+  const validUpdate = await request('/api/auth/me', {
+    role: 'STUDENT',
+    id: 'student-funnel-user',
+    method: 'PUT',
+    body: { data: { generalEducationComplete: true, preferredComponent: 'CWTS' } },
+  });
+  assert.equal(validUpdate.status, 200);
+  assert.equal(updatedUserData?.data?.generalEducationComplete, true);
+  assert.equal(updatedUserData?.data?.preferredComponent, 'CWTS');
+
+  // 2. Reject malicious / unknown fields in data
+  const invalidDataUpdate = await request('/api/auth/me', {
+    role: 'STUDENT',
+    id: 'student-funnel-user',
+    method: 'PUT',
+    body: { data: { role: 'ADMIN' } },
+  });
+  assert.equal(invalidDataUpdate.status, 400);
+});

@@ -3070,17 +3070,72 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                   </section>
                 ) : (
                 <>
+                <section className="rounded-2xl border border-slate-200 bg-gradient-to-br from-[#061A3A] via-[#0B3D91] to-[#0B3D91] p-5 text-white shadow-md shadow-slate-200/50 dark:border-slate-800 dark:shadow-none">
+                  <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+                    <div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-white/15 px-3 py-1 text-[11px] font-bold uppercase tracking-wider text-blue-100 backdrop-blur-sm border border-white/20">
+                          System Administration
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-0.5 text-xs font-semibold text-blue-100 border border-white/20">
+                          AY {schoolYear}
+                        </span>
+                      </div>
+                      <h1 className="mt-2.5 text-2xl font-bold tracking-tight sm:text-3xl">
+                        Administrator Control Center
+                      </h1>
+                      <p className="mt-1 text-xs text-blue-100/90 sm:text-sm max-w-2xl">
+                        Oversee university-wide NSTP operations, approve student registrations, manage coordinators, and monitor municipal field coverage.
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        onClick={() => setView('enrollment')}
+                        className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs sm:text-sm font-bold text-blue-900 shadow-sm transition hover:bg-blue-50 active:scale-95 cursor-pointer"
+                      >
+                        <UserCheck className="h-4 w-4 text-blue-700" />
+                        <span>Pending Approvals ({pendingRegistrations.length})</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setView('coordinators')}
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 py-2.5 text-xs sm:text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/20 active:scale-95 cursor-pointer"
+                      >
+                        <UserCog className="h-4 w-4" />
+                        <span>Coordinators</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setView('tools')}
+                        className="inline-flex items-center gap-2 rounded-xl border border-white/25 bg-white/10 px-4 py-2.5 text-xs sm:text-sm font-bold text-white backdrop-blur-sm transition hover:bg-white/20 active:scale-95 cursor-pointer"
+                      >
+                        <FileDown className="h-4 w-4" />
+                        <span>Export Reports</span>
+                      </button>
+                    </div>
+                  </div>
+                </section>
+
                 <section className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 xl:grid-cols-5">
                   {[
-                    { label: 'Total Students', value: totalStudents.toLocaleString(), detail: 'Enrolled students', icon: Users, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200' },
-                    { label: 'Coordinators', value: coordinatorAccounts.length, detail: 'Component coordinators', icon: UserCog, tone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-200' },
-                    { label: 'Facilitators', value: facilitatorAccounts.length, detail: 'Active facilitators', icon: Users, tone: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-200' },
-                    { label: 'Municipalities', value: BILIRAN_MUNICIPALITIES.length, detail: 'With assigned facilitators', icon: Building2, tone: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200' },
-                    { label: 'Student Approvals', value: pendingRegistrations.length, detail: 'Pending approval', icon: UserCheck, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200' },
+                    { label: 'Total Students', value: totalStudents.toLocaleString(), detail: 'Enrolled students', icon: Users, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200', target: 'students' as AdminDashboardView },
+                    { label: 'Coordinators', value: coordinatorAccounts.length, detail: 'Component coordinators', icon: UserCog, tone: 'bg-amber-50 text-amber-600 dark:bg-amber-500/10 dark:text-amber-200', target: 'coordinators' as AdminDashboardView },
+                    { label: 'Facilitators', value: facilitatorAccounts.length, detail: 'Active facilitators', icon: Users, tone: 'bg-indigo-50 text-indigo-600 dark:bg-indigo-500/10 dark:text-indigo-200', target: 'facilitators' as AdminDashboardView },
+                    { label: 'Municipalities', value: BILIRAN_MUNICIPALITIES.length, detail: 'With assigned facilitators', icon: Building2, tone: 'bg-sky-50 text-sky-600 dark:bg-sky-500/10 dark:text-sky-200', target: 'municipalities' as AdminDashboardView },
+                    { label: 'Student Approvals', value: pendingRegistrations.length, detail: 'Pending approval', icon: UserCheck, tone: 'bg-blue-50 text-blue-600 dark:bg-blue-500/10 dark:text-blue-200', target: 'enrollment' as AdminDashboardView },
                   ].map((stat, idx) => {
                     const Icon = stat.icon;
                     return (
-                      <article key={stat.label} className={`rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}>
+                      <article
+                        key={stat.label}
+                        onClick={() => setView(stat.target)}
+                        role="button"
+                        tabIndex={0}
+                        onKeyDown={(e) => e.key === 'Enter' && setView(stat.target)}
+                        className={`rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-5 shadow-sm cursor-pointer transition-all duration-200 hover:-translate-y-0.5 hover:shadow-md hover:border-blue-300 dark:border-slate-800 dark:bg-slate-950 dark:hover:border-blue-700 ${idx === 4 ? 'col-span-2 md:col-span-1' : ''}`}
+                      >
                         <div className="flex items-start gap-3 sm:gap-4">
                           <span className={`grid h-10 w-10 sm:h-12 sm:w-12 shrink-0 place-items-center rounded-xl sm:rounded-2xl ${stat.tone}`}>
                             <Icon className="h-5 w-5 sm:h-6 sm:w-6" />
