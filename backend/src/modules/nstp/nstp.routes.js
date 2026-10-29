@@ -22,7 +22,7 @@ import {
   adminAuditLog, adminComponentState,
   adminPendingRegistrations, adminQualifyingResults, adminStudents, adminTrainingGroups,
   getAdminSummaryController, getMyAttendance, getMyProgress,
-  getMyQualifyingResults, startMyQualifyingExam, submitMyQualifyingExam, getMyStudentProfile, listCoordinatorClasses,
+  getMyQualifyingResults, getComponentCapacities, startMyQualifyingExam, submitMyQualifyingExam, getMyStudentProfile, listCoordinatorClasses,
   listCoordinatorStudents, listInstructorClasses, listInstructorClassStudents,
   listCoordinatorTrainingGroupsController,
   completeMyModule, submitMyAssessment,
@@ -97,6 +97,9 @@ router.post('/admin/qualifying-exam/attempts/:id/void', ...admin, strictWriteLim
 adminResource('component-state', adminComponentState);
 adminResource('audit-log', adminAuditLog);
 router.get('/admin/summary', ...admin, asyncHandler(getAdminSummaryController));
+
+// Public / student track capacity query for enrollment transparency
+router.get('/components/capacity', asyncHandler(getComponentCapacities));
 
 router.get('/students/me', authenticate, requireRole('STUDENT'), asyncHandler(getCurrentStudent), asyncHandler(getMyStudentProfile));
 router.get('/students/me/modules', authenticate, requireRole('STUDENT'), asyncHandler(getCurrentStudent), asyncHandler(listStudentModules));

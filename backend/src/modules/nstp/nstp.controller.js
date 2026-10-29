@@ -35,6 +35,8 @@ import {
   toCanonicalComponentType,
   normalizeSlotLimits,
   DEFAULT_CANONICAL_SLOT_LIMITS,
+  CANONICAL_COMPONENTS,
+  COMPONENT_DISPLAY_NAMES,
 } from './component-normalization.js';
 import { getAutomaticTrackRouting } from '../../constants/bipsuPrograms.js';
 import { QUALIFYING_EXAM_ID } from '../../seed.js';
@@ -493,6 +495,63 @@ export function isLockTimeoutError(error) {
   }
   const msg = String(error.message || '');
   return /lock timeout|canceling statement due to lock timeout|lock_not_available|deadlock detected|could not obtain lock/i.test(msg);
+}
+
+export async function getComponentCapacities(req, res) {
+  const appState = await prisma.componentApplicationState.findFirst({
+    where: { isCurrent: true },
+    orderBy: { updatedAt: 'desc' },
+  }) || await prisma.componentApplicationState.findFirst({
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const slotLimits = normalizeSlotLimits(appState?.slotLimits);
+  const schoolYear = appState?.schoolYear || '2025-2026';
+  const semester = appState?.semester || '1st Semester';
+  const applicationClosed = Boolean(appState?.applicationClosed);
+
+  const capacities = {};
+
+  for (const canonical of CANONICAL_COMPONENTS) {
+    let placed = 0;
+    try {
+      placed = await countDistinctPlacedStudents(prisma, {
+        canonicalComponent: canonical,
+        schoolYear,
+        semester,
+      });
+    } catch {
+      placed = 0;
+    }
+
+    const limit = slotLimits[canonical] ?? DEFAULT_CANONICAL_SLOT_LIMITS[canonical] ?? 0;
+    const remaining = Math.max(0, limit - placed);
+    const percentFilled = limit > 0 ? (placed / limit) * 100 : 100;
+
+    let status = 'open';
+    if (applicationClosed || remaining === 0) {
+      status = 'waitlist-only';
+    } else if (percentFilled >= 80) {
+      status = 'filling-fast';
+    }
+
+    capacities[canonical] = {
+      canonical,
+      displayName: COMPONENT_DISPLAY_NAMES[canonical] || canonical,
+      limit,
+      placed,
+      remaining,
+      percentFilled: Math.round(percentFilled),
+      status,
+    };
+  }
+
+  return sendSuccess(res, {
+    schoolYear,
+    semester,
+    applicationClosed,
+    capacities,
+  });
 }
 
 export async function startMyQualifyingExam(req, res) {

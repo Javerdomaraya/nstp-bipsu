@@ -121,6 +121,30 @@ export async function upsertQualifyingResult(payload: QualifyingExamResult) {
   return apiPost<QualifyingExamResult>(`${BASE}/qualifying-results`, payload, null as unknown as QualifyingExamResult);
 }
 
+export type ComponentCapacityInfo = {
+  canonical: string;
+  displayName: string;
+  limit: number;
+  placed: number;
+  remaining: number;
+  percentFilled: number;
+  status: 'open' | 'filling-fast' | 'waitlist-only';
+};
+
+export type ComponentCapacityResponse = {
+  schoolYear: string;
+  semester: string;
+  applicationClosed: boolean;
+  capacities: Record<string, ComponentCapacityInfo>;
+};
+
+export async function fetchComponentCapacities() {
+  return apiGet<{ success: boolean; data: ComponentCapacityResponse } | null>(
+    `${BASE}/components/capacity`,
+    null
+  );
+}
+
 export async function fetchComponentState() {
   return apiGet<ComponentApplicationState[]>(`${BASE}/component-state`, []);
 }

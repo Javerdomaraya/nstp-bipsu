@@ -1,9 +1,10 @@
-import { useState, useMemo } from 'react';
-import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles, AlertTriangle } from 'lucide-react';
+import { useState, useMemo, useEffect } from 'react';
+import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles, AlertTriangle, Users } from 'lucide-react';
 import RoleShell from '../components/layout/RoleShell';
 import { isCriminologyProgram, isTeacherEducationProgram, type NstpComponent } from '../data/nstpData';
 import type { StudentUser } from '../services/authUser';
 import { apiPut } from '../services/apiClient';
+import { fetchComponentCapacities, type ComponentCapacityInfo } from '../services/api';
 
 // `as const` is what keeps `name` a literal type rather than a widened `string`,
 // so the compiler — not a runtime check downstream — proves that every option on
@@ -112,6 +113,25 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
   });
 
   const [enrolling, setEnrolling] = useState(false);
+  const [capacities, setCapacities] = useState<Record<string, ComponentCapacityInfo>>({});
+  const [capacityLoading, setCapacityLoading] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    fetchComponentCapacities()
+      .then((res) => {
+        if (active && res?.data?.capacities) {
+          setCapacities(res.data.capacities);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (active) setCapacityLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const handleEnroll = async () => {
     if (!selectedComponent) return;
@@ -199,11 +219,27 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
           </p>
         </div>
 
+        {/* Track Capacity Advisory Banner */}
+        <div className="mb-6 rounded-2xl border border-blue-200 bg-blue-50/70 p-4 text-xs text-blue-900 dark:border-blue-900/40 dark:bg-blue-950/30 dark:text-blue-200 flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            <strong className="font-semibold">Track Quotas & Placement Policy:</strong> Live capacity badges below indicate current available slots. Official track placement is granted by ranking scores on the Qualifying Examination. If your preferred track reaches capacity, you will be placed on the waitlist for coordinator review.
+          </p>
+        </div>
+
         {/* Component Cards */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
           {availableComponents.map((component) => {
             const Icon = component.icon;
             const isSelected = selectedComponent?.id === component.id;
+            const canonicalKey = component.name === 'CWTS (Coast Guard)'
+              ? 'CWTS_COAST_GUARD'
+              : component.name === 'MTS (Army)'
+              ? 'MTS_ARMY'
+              : component.name === 'MTS (Navy)'
+              ? 'MTS_NAVY'
+              : component.name;
+            const cap = capacities[canonicalKey];
 
             return (
               <button
@@ -219,12 +255,34 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
                   <div className={`${component.color} p-3 rounded-lg`}>
                     <Icon className="w-6 h-6 text-white" />
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center justify-between mb-1">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center justify-between mb-1 gap-2">
                       <h3 className="font-bold text-slate-900 dark:text-slate-100">{component.name}</h3>
-                      {isSelected && <CheckCircle className="w-5 h-5 text-amber-600" />}
+                      {isSelected && <CheckCircle className="w-5 h-5 text-amber-600 shrink-0" />}
                     </div>
                     <p className="text-sm text-slate-600 dark:text-slate-300">{component.fullName}</p>
+
+                    {/* Capacity Indicator Badge */}
+                    {cap && (
+                      <div className="mt-2.5 flex items-center gap-2">
+                        {cap.status === 'open' ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-bold text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
+                            Slots Available ({cap.remaining} left)
+                          </span>
+                        ) : cap.status === 'filling-fast' ? (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-bold text-amber-800 dark:bg-amber-950/60 dark:text-amber-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-600" />
+                            Filling Fast ({cap.remaining} left)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-800 dark:bg-rose-950/60 dark:text-rose-300">
+                            <span className="h-1.5 w-1.5 rounded-full bg-rose-600" />
+                            Waitlist Only (Quota Full)
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 

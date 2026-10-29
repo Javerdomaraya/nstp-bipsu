@@ -324,6 +324,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [school, setSchool] = useState('');
   const [degreeProgram, setDegreeProgram] = useState('');
   const [preferredMtsBranch, setPreferredMtsBranch] = useState<'MTS (Army)' | 'MTS (Navy)'>('MTS (Army)');
+  const [preferredTrack, setPreferredTrack] = useState<string>('CWTS');
   const [yearLevel, setYearLevel] = useState('');
   const [major, setMajor] = useState('');
   const [gender, setGender] = useState('');
@@ -674,7 +675,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
           ? preferredMtsBranch
           : isTeacherEducationProgram(degreeProgram, school)
           ? 'LTS'
-          : 'CWTS',
+          : preferredTrack || 'CWTS',
         createdAt: new Date().toISOString(),
       };
 
@@ -1228,6 +1229,26 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                             <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
                               Teacher Education students are routed to LTS to prepare for community literacy and numeracy tutorials in Biliran schools.
                             </p>
+                          </div>
+                        )}
+
+                        {degreeProgram && !isCriminologyProgram(degreeProgram, school) && !isTeacherEducationProgram(degreeProgram, school) && (
+                          <div className="sm:col-span-2">
+                            <SelectField
+                              label="Preferred NSTP Component Track"
+                              value={preferredTrack}
+                              onChange={setPreferredTrack}
+                              required
+                              options={[
+                                'CWTS',
+                                'CWTS (Coast Guard)',
+                                'LTS',
+                                'MTS (Army)',
+                                'MTS (Navy)',
+                              ]}
+                              placeholder="Select your preferred NSTP track"
+                              helper="Choose the component track you wish to pursue. Component placement is determined by qualifying exam rankings."
+                            />
                           </div>
                         )}
 
