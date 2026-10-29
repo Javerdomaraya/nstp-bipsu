@@ -42,9 +42,18 @@ export default function PendingAssignment({ user, onAssign, onLogout }: Props) {
     checkAssignment();
     const interval = setInterval(checkAssignment, 2000);
 
+    const handleSync = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail || detail === 'students' || detail === 'qualifying-results' || detail === 'component-state') {
+        checkAssignment();
+      }
+    };
+    window.addEventListener('nstp-socket-sync', handleSync);
+
     return () => {
       mounted = false;
       clearInterval(interval);
+      window.removeEventListener('nstp-socket-sync', handleSync);
     };
   }, [user.id, onAssign]);
 

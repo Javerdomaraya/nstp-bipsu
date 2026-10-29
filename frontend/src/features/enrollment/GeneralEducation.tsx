@@ -6,7 +6,7 @@ import StatCard from '../../components/common/StatCard';
 import { type NstpModule, type NstpAssessment } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../../utils/moduleUrls';
-import { apiGet, apiPost } from '../../services/apiClient';
+import { apiGet, apiPost, apiPut } from '../../services/apiClient';
 
 const shuffleArray = <T,>(array: T[]): T[] => {
   const copy = [...array];
@@ -42,6 +42,7 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
   const [mediaConsumed, setMediaConsumed] = useState<Record<string, boolean>>({});
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [completing, setCompleting] = useState(false);
   const MEDIA_CONSUMED_KEY = `nstp-media-consumed-${user.id}`;
 
   const commonModules = useMemo(() =>
@@ -734,11 +735,22 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
               You can now proceed to select your NSTP component.
             </p>
             <button
-              onClick={onComplete}
-              className="mt-4 inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-green-700"
+              disabled={completing}
+              onClick={async () => {
+                setCompleting(true);
+                try {
+                  await apiPut('/auth/me', { data: { generalEducationComplete: true } });
+                } catch (err) {
+                  console.warn('Unable to persist generalEducationComplete to server, continuing in session:', err);
+                } finally {
+                  setCompleting(false);
+                  onComplete();
+                }
+              }}
+              className="mt-4 inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-green-600 px-6 py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-green-700 disabled:opacity-50"
             >
               <Sparkles className="h-5 w-5" />
-              Proceed to Component Selection
+              {completing ? 'Saving Progress...' : 'Proceed to Component Selection'}
             </button>
           </div>
         )}

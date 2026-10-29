@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { FileText, Clock, AlertCircle, Award, LogOut, Shield } from 'lucide-react';
+import { FileText, Clock, AlertCircle, Award, LogOut, Shield, Send, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { NstpComponent, QualifyingExamResult, isCriminologyProgram, isTeacherEducationProgram } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
 import { apiPost, ApiRequestError } from '../../services/apiClient';
 import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../../components/ui/dialog';
 
 export type QualifyingQuestion = {
   id: string;
@@ -24,10 +25,18 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
   const [submitted, setSubmitted] = useState(false);
   const [score, setScore] = useState<number | null>(null);
   const [submissionResult, setSubmissionResult] = useState<QualifyingExamResult | null>(null);
+  const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const answersRef = useRef<Record<number, number>>({});
   const questionsRef = useRef<QualifyingQuestion[]>([]);
   const attemptIdRef = useRef<string | null>(null);
   const submittedRef = useRef(false);
+
+  const scrollToQuestion = (idx: number) => {
+    const el = document.getElementById(`exam-question-${idx}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
 
   answersRef.current = answers;
   questionsRef.current = questions;
@@ -302,7 +311,13 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
                 )}
               </div>
             </div>
-            <div className="flex items-center gap-2 text-orange-700 bg-orange-100 px-4 py-2 rounded-xl dark:bg-orange-500/15 dark:text-orange-200">
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+              timeLeft <= 120
+                ? 'text-red-700 bg-red-100 border border-red-300 animate-pulse dark:bg-red-500/25 dark:text-red-200 dark:border-red-500/30'
+                : timeLeft <= 600
+                ? 'text-amber-800 bg-amber-100 border border-amber-300 dark:bg-amber-500/20 dark:text-amber-200 dark:border-amber-500/30'
+                : 'text-blue-700 bg-blue-50 border border-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/20'
+            }`}>
               <Clock className="w-5 h-5" />
               <span className="font-mono font-semibold text-lg">{formatTime(timeLeft)}</span>
             </div>
@@ -336,11 +351,58 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
           </div>
         )}
 
+        {/* Question Palette / Navigator */}
+        {!loading && questions.length > 0 && (
+          <div className="bg-white rounded-2xl border border-slate-200 p-5 mb-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-slate-700 dark:text-slate-200">
+                  Question Navigator
+                </h3>
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300">
+                  {Object.keys(answers).length} of {questions.length} answered
+                </span>
+              </div>
+              <div className="flex items-center gap-4 text-xs text-slate-500 dark:text-slate-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded bg-emerald-600 inline-block" /> Answered
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded bg-slate-100 border border-slate-300 dark:bg-slate-800 dark:border-slate-600 inline-block" /> Unanswered
+                </span>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {questions.map((_, idx) => {
+                const isAnswered = answers[idx] !== undefined;
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => scrollToQuestion(idx)}
+                    className={`w-9 h-9 rounded-lg font-semibold text-xs transition-all flex items-center justify-center cursor-pointer ${
+                      isAnswered
+                        ? 'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700'
+                        : 'bg-slate-100 border border-slate-300 text-slate-700 hover:bg-slate-200 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                  >
+                    {idx + 1}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Questions */}
         {!loading && (
           <div className="space-y-6 mb-6">
             {questions.map((q, idx) => (
-              <div key={q.id || idx} className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900">
+              <div
+                id={`exam-question-${idx}`}
+                key={q.id || idx}
+                className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm dark:border-slate-700 dark:bg-slate-900 scroll-mt-24"
+              >
                 <h3 className="font-semibold text-slate-900 mb-4 dark:text-slate-100">
                   {idx + 1}. {q.prompt}
                 </h3>
@@ -383,15 +445,62 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
                 </p>
               </div>
               <button
-                onClick={handleSubmit}
-                disabled={Object.keys(answers).length < questions.length}
-                className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium disabled:bg-slate-300 disabled:cursor-not-allowed"
+                onClick={() => setConfirmModalOpen(true)}
+                className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium inline-flex items-center gap-2 cursor-pointer shadow-sm"
               >
+                <Send className="w-4 h-4" />
                 Submit Examination
               </button>
             </div>
           </div>
         )}
+
+        {/* Pre-submission Confirmation Dialog */}
+        <Dialog open={confirmModalOpen} onOpenChange={setConfirmModalOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold flex items-center gap-2 text-slate-900 dark:text-slate-100">
+                <HelpCircle className="w-6 h-6 text-amber-500" />
+                Confirm Exam Submission
+              </DialogTitle>
+              <DialogDescription className="text-slate-600 dark:text-slate-300 pt-2 text-sm leading-relaxed">
+                {Object.keys(answers).length < questions.length ? (
+                  <span className="block space-y-3">
+                    <span className="block p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-900 dark:bg-amber-500/10 dark:border-amber-500/20 dark:text-amber-200 text-sm">
+                      <strong>Attention:</strong> You have answered <strong>{Object.keys(answers).length}</strong> out of <strong>{questions.length}</strong> questions.
+                      {' '}{questions.length - Object.keys(answers).length} question(s) remain unanswered.
+                    </span>
+                    <span className="block">Unanswered questions will be scored as 0. Are you sure you wish to finalize and submit now?</span>
+                  </span>
+                ) : (
+                  <span>
+                    You have answered all <strong>{questions.length}</strong> questions. Once submitted, your score will be calculated and your component placement processed.
+                  </span>
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                type="button"
+                onClick={() => setConfirmModalOpen(false)}
+                className="px-4 py-2.5 rounded-xl border border-slate-300 text-slate-700 font-medium hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800 cursor-pointer text-sm"
+              >
+                Review Questions
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmModalOpen(false);
+                  handleSubmit();
+                }}
+                className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 text-white font-medium hover:opacity-95 transition-opacity cursor-pointer shadow-sm inline-flex items-center gap-2 text-sm"
+              >
+                <Send className="w-4 h-4" />
+                Confirm & Submit
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
     </div>
   );

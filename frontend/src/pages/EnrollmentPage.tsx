@@ -3,6 +3,7 @@ import { Shield, Heart, Anchor, CheckCircle, LogOut, Sparkles, AlertTriangle } f
 import RoleShell from '../components/layout/RoleShell';
 import { isCriminologyProgram, isTeacherEducationProgram, type NstpComponent } from '../data/nstpData';
 import type { StudentUser } from '../services/authUser';
+import { apiPut } from '../services/apiClient';
 
 // `as const` is what keeps `name` a literal type rather than a widened `string`,
 // so the compiler — not a runtime check downstream — proves that every option on
@@ -110,8 +111,17 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
     return null;
   });
 
-  const handleEnroll = () => {
-    if (selectedComponent) {
+  const [enrolling, setEnrolling] = useState(false);
+
+  const handleEnroll = async () => {
+    if (!selectedComponent) return;
+    setEnrolling(true);
+    try {
+      await apiPut('/auth/me', { data: { preferredComponent: selectedComponent.name } });
+    } catch (err) {
+      console.warn('Unable to persist preferredComponent to server, continuing in session:', err);
+    } finally {
+      setEnrolling(false);
       onEnroll(selectedComponent.name);
     }
   };
@@ -246,11 +256,12 @@ export default function EnrollmentPage({ user, onEnroll, onLogout }: { user: Stu
                 </p>
               </div>
               <button
+                disabled={enrolling}
                 onClick={handleEnroll}
-                className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium inline-flex items-center gap-2 cursor-pointer"
+                className="bg-gradient-to-r from-amber-500 to-orange-600 text-white px-8 py-3 rounded-xl hover:opacity-95 transition-opacity font-medium inline-flex items-center gap-2 cursor-pointer disabled:opacity-50"
               >
                 <Sparkles className="w-4 h-4" />
-                Complete Enrollment
+                {enrolling ? 'Enrolling...' : 'Complete Enrollment'}
               </button>
             </div>
           </div>
