@@ -1,5 +1,6 @@
 import React from 'react';
 import Skeleton from './Skeleton';
+import { cn } from '../../ui/utils';
 
 export type TableSkeletonProps = {
   columns?: number;
@@ -7,6 +8,13 @@ export type TableSkeletonProps = {
   hasHeader?: boolean;
   className?: string;
 };
+
+function getCellWidth(cIdx: number, totalCols: number): string {
+  if (cIdx === 0) return 'w-36';
+  if (cIdx === 1) return 'w-24';
+  if (cIdx === totalCols - 1) return 'w-16';
+  return 'w-20';
+}
 
 export default function TableSkeleton({
   columns = 4,
@@ -17,9 +25,12 @@ export default function TableSkeleton({
   return (
     <div
       aria-hidden="true"
-      className={`w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
+      className={cn(
+        'w-full overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm dark:border-slate-800 dark:bg-slate-900',
+        className
+      )}
     >
-      {hasHeader && (
+      {hasHeader ? (
         <div className="flex w-full flex-wrap items-center justify-between gap-3 border-b border-slate-100 p-4 sm:p-5 dark:border-slate-800">
           <div className="min-w-0 flex-1 space-y-1.5">
             <Skeleton className="h-5 w-40 rounded" />
@@ -27,7 +38,7 @@ export default function TableSkeleton({
           </div>
           <Skeleton className="h-9 w-24 rounded-xl" />
         </div>
-      )}
+      ) : null}
 
       {/* Desktop Table View */}
       <div className="hidden md:block overflow-x-auto">
@@ -36,7 +47,7 @@ export default function TableSkeleton({
             <tr>
               {Array.from({ length: columns }).map((_, i) => (
                 <th key={i} className="px-4 py-3.5 sm:px-6">
-                  <Skeleton className={`h-3.5 ${i === 0 ? 'w-28' : 'w-20'} rounded`} />
+                  <Skeleton className={cn('h-3.5 rounded', i === 0 ? 'w-28' : 'w-20')} />
                 </th>
               ))}
             </tr>
@@ -46,17 +57,7 @@ export default function TableSkeleton({
               <tr key={rIdx}>
                 {Array.from({ length: columns }).map((_, cIdx) => (
                   <td key={cIdx} className="px-4 py-3.5 sm:px-6">
-                    <Skeleton
-                      className={`h-4 rounded ${
-                        cIdx === 0
-                          ? 'w-36'
-                          : cIdx === 1
-                          ? 'w-24'
-                          : cIdx === columns - 1
-                          ? 'w-16'
-                          : 'w-20'
-                      }`}
-                    />
+                    <Skeleton className={cn('h-4 rounded', getCellWidth(cIdx, columns))} />
                   </td>
                 ))}
               </tr>
@@ -81,3 +82,4 @@ export default function TableSkeleton({
     </div>
   );
 }
+

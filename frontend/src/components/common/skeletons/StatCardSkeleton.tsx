@@ -1,5 +1,6 @@
 import React from 'react';
 import Skeleton from './Skeleton';
+import { cn } from '../../ui/utils';
 
 export type StatCardSkeletonProps = {
   hasProgress?: boolean;
@@ -15,7 +16,10 @@ export default function StatCardSkeleton({
   return (
     <div
       aria-hidden="true"
-      className={`flex min-h-[6.75rem] w-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900 ${className}`}
+      className={cn(
+        'flex min-h-[6.75rem] w-full flex-col justify-between rounded-2xl border border-slate-200 bg-white p-3.5 sm:p-4 shadow-sm dark:border-slate-800 dark:bg-slate-900',
+        className
+      )}
     >
       <div>
         <div className="flex items-start justify-between gap-2">
@@ -25,9 +29,10 @@ export default function StatCardSkeleton({
           </div>
           <Skeleton className="h-9 w-9 sm:h-10 sm:w-10 rounded-xl shrink-0" />
         </div>
-        {hasProgress && <Skeleton className="mt-2.5 h-1.5 w-full rounded-full" />}
+        {hasProgress ? <Skeleton className="mt-2.5 h-1.5 w-full rounded-full" /> : null}
       </div>
-      {hasDetail && <Skeleton className="mt-2.5 h-3 w-36 rounded" />}
+      {hasDetail ? <Skeleton className="mt-2.5 h-3 w-36 rounded" /> : null}
     </div>
   );
 }
+
