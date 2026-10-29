@@ -6,3 +6,5 @@ export { default as TableSkeleton } from './TableSkeleton';
 export { default as ListSkeleton } from './ListSkeleton';
 export { default as ProfileSectionSkeleton } from './ProfileSectionSkeleton';
 export { default as AppShellSkeleton } from './AppShellSkeleton';
+export { default as AuthSkeleton } from './AuthSkeleton';
+

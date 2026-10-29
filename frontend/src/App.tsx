@@ -29,6 +29,7 @@ import { fetchCurrentUser, logoutCurrentUser } from './services/api';
 import { normalizeAuthenticatedUser, type AuthenticatedUser, type StudentUser } from './services/authUser';
 import { toast, Toaster } from 'sonner';
 import AppShellSkeleton from './components/common/skeletons/AppShellSkeleton';
+import AuthSkeleton from './components/common/skeletons/AuthSkeleton';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './components/ui/dialog';
 import SectionErrorBoundary from './components/common/SectionErrorBoundary';
 
@@ -481,7 +482,7 @@ export default function App() {
   if (!user) {
     return (
       <>
-        <React.Suspense fallback={<AppShellSkeleton />}>
+        <React.Suspense fallback={<AuthSkeleton />}>
           <LoginPage onLogin={handleLogin} />
         </React.Suspense>
         <Toaster />

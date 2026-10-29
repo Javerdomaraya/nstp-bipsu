@@ -10,6 +10,7 @@ import {
   ListSkeleton,
   ProfileSectionSkeleton,
   AppShellSkeleton,
+  AuthSkeleton,
 } from '../components/common/skeletons';
 
 describe('Skeleton components library', () => {
@@ -70,5 +71,12 @@ describe('Skeleton components library', () => {
     expect(html).toContain('aside');
     expect(html).toContain('main');
     expect(html).toContain('bg-[#061f4f]');
+  });
+
+  it('renders AuthSkeleton matching the two-panel authentication layout', () => {
+    const html = renderToStaticMarkup(<AuthSkeleton />);
+    expect(html).toContain('aria-hidden="true"');
+    expect(html).toContain('bg-[#06245c]');
+    expect(html).toContain('lg:grid-cols-[400px_1fr]');
   });
 });

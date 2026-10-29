@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
+  AlertCircle,
   ArrowRight,
   Award,
   BarChart3,
   Bell,
   BookOpen,
+  Building2,
   CalendarDays,
   CheckCircle,
   ChevronLeft,
@@ -19,13 +21,16 @@ import {
   IdCard,
   Landmark,
   ListChecks,
+  Loader2,
   Lock,
   LockKeyhole,
   Mail,
+  MapPin,
   MapPinned,
   Megaphone,
   Menu,
   MoonStar,
+  Phone,
   PlayCircle,
   Settings,
   Shield,
@@ -34,6 +39,7 @@ import {
   Star,
   SunMedium,
   TrendingUp,
+  UserRound,
   Users,
   X,
 } from 'lucide-react';
@@ -333,11 +339,12 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [provincesLoading, setProvincesLoading] = useState(false);
   const [provincialAddress, setProvincialAddress] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [email, setEmail] = useState<string>(SEEDED_CREDENTIALS.student.identifier);
-  const [password, setPassword] = useState<string>(SEEDED_PASSWORD);
+  const [email, setEmail] = useState<string>(() => (import.meta.env.DEV ? SEEDED_CREDENTIALS.student.identifier : ''));
+  const [password, setPassword] = useState<string>(() => (import.meta.env.DEV ? SEEDED_PASSWORD : ''));
   const [confirmPassword, setConfirmPassword] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [selectedFeature, setSelectedFeature] = useState(portalFeatures[0].label);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -457,6 +464,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const performLogin = async (loginIdentifier: string, loginPass: string, expectedRole?: string) => {
     setError(null);
     setNotice(null);
+    setIsSubmitting(true);
 
     try {
       // Real HTTP request to POST /auth/login
@@ -507,17 +515,21 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     } catch (err: any) {
       const msg = err?.payload?.error || err?.payload?.message || err?.message || `Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`;
       setError(msg);
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const selectCoordinatorPillar = (pillar: 'CWTS' | 'LTS' | 'MTS', autoLogin = false) => {
     setSelectedCoordPillar(pillar);
-    const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === pillar);
-    if (found) {
-      setEmail(found.identifier);
-      setPassword(found.password);
-      if (autoLogin) {
-        void performLogin(found.identifier, found.password, 'coordinator');
+    if (import.meta.env.DEV) {
+      const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === pillar);
+      if (found) {
+        setEmail(found.identifier);
+        setPassword(found.password);
+        if (autoLogin) {
+          void performLogin(found.identifier, found.password, 'coordinator');
+        }
       }
     }
     setError(null);
@@ -525,22 +537,27 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
 
   const selectDemoRole = (role: 'student' | 'facilitator' | 'coordinator' | 'admin', autoLogin = false) => {
     setLoginRole(role);
-    if (role === 'coordinator') {
-      const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0];
-      setEmail(found.identifier);
-      setPassword(found.password);
-      if (autoLogin) {
-        void performLogin(found.identifier, found.password, role);
-      }
-    } else {
-      const creds = SEEDED_CREDENTIALS[role];
-      if (creds) {
-        setEmail(creds.identifier);
-        setPassword(creds.password);
+    if (import.meta.env.DEV) {
+      if (role === 'coordinator') {
+        const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0];
+        setEmail(found.identifier);
+        setPassword(found.password);
         if (autoLogin) {
-          void performLogin(creds.identifier, creds.password, role);
+          void performLogin(found.identifier, found.password, role);
+        }
+      } else {
+        const creds = SEEDED_CREDENTIALS[role];
+        if (creds) {
+          setEmail(creds.identifier);
+          setPassword(creds.password);
+          if (autoLogin) {
+            void performLogin(creds.identifier, creds.password, role);
+          }
         }
       }
+    } else {
+      setEmail('');
+      setPassword('');
     }
     setError(null);
   };
@@ -551,7 +568,13 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     setError(null);
     setNotice(null);
     if (nextMode === 'login') {
-      selectDemoRole(initialRole);
+      if (import.meta.env.DEV) {
+        selectDemoRole(initialRole);
+      } else {
+        setLoginRole(initialRole);
+        setEmail('');
+        setPassword('');
+      }
     } else {
       setLoginRole(initialRole);
       setEmail('');
@@ -655,35 +678,42 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         createdAt: new Date().toISOString(),
       };
 
-      const submission = await apiPost<{ success: boolean } | null>('/auth/pending-registration', pendingRequest, null);
-      if (!submission?.success) {
-        setError('Unable to submit your registration. Please try again.');
-        return;
-      }
+      setIsSubmitting(true);
+      try {
+        const submission = await apiPost<{ success: boolean } | null>('/auth/pending-registration', pendingRequest, null);
+        if (!submission?.success) {
+          setError('Unable to submit your registration. Please try again.');
+          return;
+        }
 
-      setNotice('Registration submitted. Please wait for admin approval before signing in.');
-      setSurname('');
-      setFirstName('');
-      setMiddleName('');
-      setStudentId('');
-      setSchool('');
-      setDegreeProgram('');
-      setYearLevel('');
-      setMajor('');
-      setGender('');
-      setBirthdate('');
-      setHouseStreetPurok('');
-      setBarangay('');
-      setMunicipality('');
-      setMunicipalityCode('');
-      setAssignedMunicipality('');
-      setProvince('');
-      setProvincialAddress('');
-      setContactNumber('');
-      setEmail('');
-      setPassword('');
-      setConfirmPassword('');
-      setMode('login');
+        setNotice('Registration submitted. Please wait for admin approval before signing in.');
+        setSurname('');
+        setFirstName('');
+        setMiddleName('');
+        setStudentId('');
+        setSchool('');
+        setDegreeProgram('');
+        setYearLevel('');
+        setMajor('');
+        setGender('');
+        setBirthdate('');
+        setHouseStreetPurok('');
+        setBarangay('');
+        setMunicipality('');
+        setMunicipalityCode('');
+        setAssignedMunicipality('');
+        setProvince('Biliran');
+        setProvincialAddress('');
+        setContactNumber('');
+        setEmail('');
+        setPassword('');
+        setConfirmPassword('');
+        setMode('login');
+      } catch (err: any) {
+        setError(err?.payload?.error || err?.message || 'Unable to submit your registration. Please try again.');
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -944,91 +974,208 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       </main>
 
       {showAuth && (
-        <div className="fixed inset-0 z-50 overflow-auto bg-slate-950/70 p-3 backdrop-blur-sm md:p-6">
-          <div className="mx-auto grid min-h-full max-w-6xl items-center">
-            <div className="grid overflow-hidden rounded-2xl border border-blue-200/70 bg-white shadow-[0_25px_65px_-28px_rgba(11,78,162,0.45)] dark:border-slate-700 dark:bg-slate-950 lg:grid-cols-[0.86fr_1.14fr]">
-              <section className="relative hidden bg-[#06245c] p-8 text-white lg:block">
-                <div className="absolute inset-0 bg-[#06245c]" />
-                <div className="absolute inset-x-0 top-0 h-1 bg-[#f2b705]" />
-                <div className="relative">
-                  <div className="mb-6 flex items-center gap-3">
-                    <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-16 w-16 object-contain" />
-                    <img src={nstpLogo} alt="NSTP logo" className="h-16 w-16 object-contain" />
-                  </div>
-                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-blue-100">Official BiPSU NSTP Portal</p>
-                  <h2 className="mt-2 text-3xl font-semibold">Secure access for enrollment, learning records, and NSTP administration.</h2>
-                  <div className="mt-8 space-y-3">
-                    {['Student ID approval before access', 'Role-based dashboards for students, facilitators, and admins', 'Grades, reports, modules, and exams in one portal'].map((item) => (
-                      <div key={item} className="flex items-center gap-3 rounded-xl border border-white/18 bg-white/10 p-3 text-sm font-semibold">
-                        <CheckCircle className="h-4 w-4 text-[#ffd24d]" />
-                        {item}
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="auth-dialog-title"
+          className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-slate-950/75 p-3 sm:p-4 md:p-6 backdrop-blur-sm"
+        >
+          <div className="relative w-full max-w-5xl my-auto rounded-3xl border border-slate-200/80 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950 overflow-hidden lg:grid lg:grid-cols-[380px_minmax(0,1fr)] max-h-[92vh] flex flex-col">
+            {/* Left Branding Panel (Desktop Only) */}
+            <section className="relative hidden bg-[#06245c] p-8 text-white lg:flex lg:flex-col lg:justify-between">
+              <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[#f2b705] to-[#ffd24d]" />
+              <div className="relative space-y-6">
+                <div className="flex items-center gap-3">
+                  <img src="/bipsu-logo.png" alt="BiPSU seal" className="h-14 w-14 object-contain" />
+                  <img src={nstpLogo} alt="NSTP logo" className="h-14 w-14 object-contain" />
+                </div>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#ffd24d]">Biliran Province State University</p>
+                  <h2 className="mt-2 text-2xl font-bold leading-tight text-white">
+                    National Service Training Program
+                  </h2>
+                  <p className="mt-2 text-xs leading-relaxed text-blue-100/80">
+                    Official academic portal for student enrollment, track classification, modular learning, and grade verification.
+                  </p>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  {[
+                    { label: 'Verified Student Enrollment', desc: 'Registrar-linked verification with official BiPSU Student ID.' },
+                    { label: 'Automated Track Routing', desc: 'Direct pathway assignment for CWTS, LTS, MTS Army and MTS Navy.' },
+                    { label: 'Academic Grades & Clearances', desc: 'Track 25 Common Module hours, assessments, and semester standing.' },
+                  ].map((feat) => (
+                    <div key={feat.label} className="rounded-xl border border-white/12 bg-white/6 p-3 text-left">
+                      <div className="flex items-center gap-2">
+                        <CheckCircle className="h-4 w-4 text-[#ffd24d] shrink-0" />
+                        <p className="text-xs font-bold text-white">{feat.label}</p>
                       </div>
-                    ))}
-                  </div>
-                </div>
-              </section>
-
-              <section className="p-4 sm:p-6 md:p-10">
-                <div className="mb-5 flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="mb-2.5 flex items-center gap-2 lg:hidden">
-                      <img src="/bipsu-logo.png" alt="Biliran Province State University logo" className="h-9 w-9 object-contain" />
-                      <img src={nstpLogo} alt="NSTP logo" className="h-9 w-9 object-contain" />
+                      <p className="mt-1 text-[11px] text-white/70 leading-normal pl-6">{feat.desc}</p>
                     </div>
-                    <p className="text-xs font-bold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Portal Access</p>
-                    <h2 className="mt-1 text-xl font-semibold text-slate-900 dark:text-slate-100 sm:text-2xl">{mode === 'login' ? 'Sign in to continue' : 'Request student access'}</h2>
-                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300 sm:text-sm">
-                      {mode === 'login'
-                        ? 'Access modules, assessments, grades, announcements, reports, and enrollment tools.'
-                        : 'Use your BiPSU student ID. Admin approval is required before login.'}
-                    </p>
-                  </div>
-                  <button onClick={() => setShowAuth(false)} className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-bold text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 sm:text-sm">
-                    Close
-                  </button>
-                </div>
-
-                <div className="mb-5 inline-flex rounded-xl border border-slate-200 bg-white p-1 dark:border-slate-700 dark:bg-slate-900">
-                  {(['login', 'register'] as LoginMode[]).map((item) => (
-                    <button
-                      key={item}
-                      type="button"
-                      onClick={() => {
-                        setMode(item);
-                        setError(null);
-                        if (item === 'login') {
-                          selectDemoRole(loginRole);
-                        } else {
-                          setEmail('');
-                          setPassword('');
-                          setConfirmPassword('');
-                        }
-                      }}
-                      className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors sm:text-sm ${mode === item ? 'bg-blue-700 text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'}`}
-                    >
-                      {item === 'login' ? 'Login' : 'Register'}
-                    </button>
                   ))}
                 </div>
+              </div>
 
-                {notice && <div className="mb-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-100">{notice}</div>}
-                {error && <div className="mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-100">{error}</div>}
+              <div className="relative pt-6 border-t border-white/10 text-[11px] text-white/60">
+                <p className="font-semibold text-white/80">BiPSU Main Campus</p>
+                <p>Naval, Biliran 6560 · Philippines</p>
+              </div>
+            </section>
 
-                <form onSubmit={handleSubmit} className="grid gap-4">
-                  {mode === 'register' && (
-                    <div className="max-h-[60vh] space-y-4 overflow-y-auto pr-1 sm:max-h-[65vh]">
-                      <FormSection title="Student Information">
-                        <Field label="BiPSU Student ID" icon={IdCard} value={studentId} onChange={setStudentId} placeholder="2026-0000" required />
-                        <Field label="Surname" value={surname} onChange={setSurname} placeholder="Dela Cruz" required />
-                        <Field label="First Name" value={firstName} onChange={setFirstName} placeholder="Juan" required />
-                        <Field label="Middle Name" value={middleName} onChange={setMiddleName} placeholder="Santos" optional />
-                        <SelectField label="Gender" value={gender} onChange={setGender} required options={['Female', 'Male', 'Prefer not to say']} placeholder="Select gender" />
-                        <Field label="Birthdate" type="date" value={birthdate} onChange={setBirthdate} placeholder="Birthdate" required />
+            {/* Right Form Panel */}
+            <section className="flex flex-col min-w-0 flex-1 max-h-[92vh] overflow-hidden bg-white dark:bg-slate-950">
+              {/* Header with Title and Close Button */}
+              <div className="shrink-0 p-5 sm:p-6 pb-0 flex items-start justify-between gap-3 border-b border-slate-100 dark:border-slate-800/60 pb-4">
+                <div className="min-w-0">
+                  <div className="mb-2 flex items-center gap-2 lg:hidden">
+                    <img src="/bipsu-logo.png" alt="BiPSU seal" className="h-7 w-7 object-contain" />
+                    <img src={nstpLogo} alt="NSTP logo" className="h-7 w-7 object-contain" />
+                    <span className="text-xs font-bold text-[#06245c] dark:text-blue-300">BiPSU NSTP Portal</span>
+                  </div>
+                  <h2 id="auth-dialog-title" className="text-xl sm:text-2xl font-bold tracking-tight text-slate-900 dark:text-slate-100">
+                    {mode === 'login' ? 'Sign in to your account' : 'Request Student Access'}
+                  </h2>
+                  <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                    {mode === 'login'
+                      ? 'Enter your institutional credentials to access your NSTP workspace.'
+                      : 'Complete the official registration form to submit your account for administrator approval.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAuth(false)}
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-100 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-800"
+                  aria-label="Close dialog"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {/* Segmented Control: Sign In / Register */}
+              <div className="shrink-0 px-5 sm:px-6 pt-4">
+                <div className="grid grid-cols-2 rounded-xl bg-slate-100 p-1 dark:bg-slate-800/80">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('login');
+                      setError(null);
+                      setNotice(null);
+                    }}
+                    className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs sm:text-sm font-semibold transition-all ${
+                      mode === 'login'
+                        ? 'bg-white text-[#06245c] shadow-xs dark:bg-slate-900 dark:text-white'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                    }`}
+                  >
+                    <LockKeyhole className="h-3.5 w-3.5" />
+                    <span>Sign In</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode('register');
+                      setError(null);
+                      setNotice(null);
+                    }}
+                    className={`flex items-center justify-center gap-2 rounded-lg py-2.5 text-xs sm:text-sm font-semibold transition-all ${
+                      mode === 'register'
+                        ? 'bg-white text-[#06245c] shadow-xs dark:bg-slate-900 dark:text-white'
+                        : 'text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white'
+                    }`}
+                  >
+                    <IdCard className="h-3.5 w-3.5" />
+                    <span>Student Registration</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Feedback Alerts */}
+              <div className="shrink-0 px-5 sm:px-6 pt-3">
+                {notice && (
+                  <div className="flex items-start gap-2.5 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
+                    <CheckCircle className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <span>{notice}</span>
+                  </div>
+                )}
+                {error && (
+                  <div className="flex items-start gap-2.5 rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
+                    <AlertCircle className="h-4 w-4 text-rose-600 shrink-0 mt-0.5" />
+                    <span>{error}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Scrollable Form Body */}
+              <div className="flex-1 overflow-y-auto px-5 sm:px-6 py-4">
+                <form id="auth-form" onSubmit={handleSubmit} className="space-y-4">
+                  {mode === 'register' ? (
+                    <div className="space-y-4">
+                      {/* Section 1: Student Information */}
+                      <FormSection
+                        title="Student Identification"
+                        description="Personal details as recorded with the BiPSU University Registrar."
+                        icon={UserRound}
+                      >
+                        <Field
+                          label="BiPSU Student ID"
+                          icon={IdCard}
+                          value={studentId}
+                          onChange={setStudentId}
+                          placeholder="e.g. 2024-12345"
+                          required
+                          autoComplete="off"
+                        />
+                        <Field
+                          label="Surname"
+                          value={surname}
+                          onChange={setSurname}
+                          placeholder="Dela Cruz"
+                          required
+                          autoComplete="family-name"
+                        />
+                        <Field
+                          label="First Name"
+                          value={firstName}
+                          onChange={setFirstName}
+                          placeholder="Juan"
+                          required
+                          autoComplete="given-name"
+                        />
+                        <Field
+                          label="Middle Name"
+                          value={middleName}
+                          onChange={setMiddleName}
+                          placeholder="Santos"
+                          optional
+                          autoComplete="additional-name"
+                        />
+                        <SelectField
+                          label="Gender"
+                          value={gender}
+                          onChange={setGender}
+                          required
+                          options={['Female', 'Male', 'Prefer not to say']}
+                          placeholder="Select gender"
+                        />
+                        <Field
+                          label="Birthdate"
+                          type="date"
+                          value={birthdate}
+                          onChange={setBirthdate}
+                          placeholder="YYYY-MM-DD"
+                          required
+                          autoComplete="bday"
+                        />
                       </FormSection>
 
-                      <FormSection title="Academic Information">
+                      {/* Section 2: Academic Information */}
+                      <FormSection
+                        title="Academic Information"
+                        description="Select your college department and active degree program."
+                        icon={GraduationCap}
+                      >
                         <SelectField
-                          label="School / College / Department"
+                          label="School / Department"
                           value={school}
                           onChange={(value) => {
                             setSchool(value);
@@ -1053,13 +1200,13 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         />
 
                         {degreeProgram && isCriminologyProgram(degreeProgram, school) && (
-                          <div className="rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
-                            <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200 mb-1">
+                          <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
+                            <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-200 mb-1">
                               <Shield className="w-4 h-4 text-amber-600" />
                               <span>Mandatory Track Routing: Military Training Service (MTS / ROTC)</span>
                             </div>
-                            <p className="mb-2.5 text-slate-700 dark:text-slate-300">
-                              Students in the School of Criminal Justice Education (BS in Criminology) are automatically routed to the Military Training Service (ROTC) track. Please select your service branch:
+                            <p className="mb-2 text-slate-700 dark:text-slate-300 leading-relaxed">
+                              Students enrolled in Criminology are automatically routed to the Military Training Service track. Please choose your branch of service:
                             </p>
                             <SelectField
                               label="MTS Service Branch"
@@ -1073,16 +1220,17 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         )}
 
                         {degreeProgram && isTeacherEducationProgram(degreeProgram, school) && (
-                          <div className="rounded-xl border border-blue-300 bg-blue-50 p-3.5 text-xs text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
-                            <div className="flex items-center gap-1.5 font-semibold text-blue-800 dark:text-blue-200 mb-1">
+                          <div className="sm:col-span-2 rounded-xl border border-blue-300 bg-blue-50 p-3.5 text-xs text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
+                            <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-200 mb-1">
                               <Shield className="w-4 h-4 text-blue-600" />
                               <span>Mandatory Track Routing: Literacy Training Service (LTS)</span>
                             </div>
-                            <p className="text-slate-700 dark:text-slate-300">
-                              Students in the School of Teacher Education are automatically routed to the Literacy Training Service (LTS) to prepare for specialized community literacy and numeracy tutorials in Biliran schools.
+                            <p className="text-slate-700 dark:text-slate-300 leading-relaxed">
+                              Teacher Education students are routed to LTS to prepare for community literacy and numeracy tutorials in Biliran schools.
                             </p>
                           </div>
                         )}
+
                         <SelectField
                           label="Year Level"
                           value={yearLevel}
@@ -1091,6 +1239,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           options={YEAR_LEVEL_OPTIONS}
                           placeholder="Select year level"
                         />
+
                         {isProgramWithMajor(degreeProgram) && (
                           <SelectField
                             label="Major"
@@ -1103,15 +1252,29 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         )}
                       </FormSection>
 
-                      <FormSection title="Contact and Address">
-                        <Field label="Contact Number" value={contactNumber} onChange={setContactNumber} placeholder="09xx xxx xxxx" required />
+                      {/* Section 3: Contact & Address */}
+                      <FormSection
+                        title="Contact & Permanent Address"
+                        description="Used for facilitator assignment and official NSTP communications."
+                        icon={MapPin}
+                      >
+                        <Field
+                          label="Mobile Contact Number"
+                          icon={Phone}
+                          value={contactNumber}
+                          onChange={setContactNumber}
+                          placeholder="09xx xxx xxxx"
+                          required
+                          autoComplete="tel"
+                        />
                         <Field
                           label="House No. / Street / Purok"
                           value={houseStreetPurok}
                           onChange={setHouseStreetPurok}
-                          placeholder="Example: Purok 2, M.H. Del Pilar St."
+                          placeholder="e.g. Purok 2, M.H. Del Pilar St."
                           optional
-                          helper="You may include your house number, street, or purok."
+                          helper="House number, street, or zone"
+                          autoComplete="street-address"
                         />
                         <SelectField
                           label="Province"
@@ -1125,8 +1288,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           required
                           options={provinces.map((p) => p.name)}
                           placeholder="Select province"
-                          disabled={false}
-                          helper="Select your home province (Biliran prioritized)."
+                          helper="Home province (Biliran prioritized)"
                         />
                         <SelectField
                           label="Municipality"
@@ -1141,7 +1303,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           options={municipalities.map((m) => m.name)}
                           placeholder={!province ? 'Select a province first' : 'Select municipality'}
                           disabled={!province}
-                          helper={province === 'Biliran' ? 'Select your Biliran municipality (determines NSTP field assignment).' : 'Your home municipality.'}
+                          helper={province === 'Biliran' ? 'Biliran municipality determines NSTP field assignment.' : 'Home municipality.'}
                         />
                         <BarangaySearch
                           municipalityCode={municipalityCode}
@@ -1149,59 +1311,116 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           value={barangay}
                           onChange={setBarangay}
                           required
+                          disabled={!municipality}
                         />
-                        <Field label="Provincial Address" value={provincialAddress} onChange={setProvincialAddress} placeholder="Permanent home address" optional helper="Optional if same as current address." />
-                      </FormSection>
-                      <FormSection title="NSTP Assignment">
                         <Field
-                          label="Assigned Municipality (NSTP)"
-                          value={assignedMunicipality}
-                          onChange={() => {}}
-                          placeholder="Auto-determined"
-                          readOnly
-                          helper="Automatically assigned for facilitator routing. Biliran students use their municipality; non-Biliran students are assigned to Naval."
+                          label="Provincial Address"
+                          value={provincialAddress}
+                          onChange={setProvincialAddress}
+                          placeholder="Permanent provincial address"
+                          optional
+                          helper="Optional if same as current address."
+                        />
+                        <div className="sm:col-span-2">
+                          <Field
+                            label="Assigned NSTP Municipality"
+                            value={assignedMunicipality}
+                            onChange={() => {}}
+                            placeholder="Auto-determined"
+                            readOnly
+                            helper="Auto-calculated for facilitator routing: Biliran residents use their municipality; others are assigned to Naval."
+                          />
+                        </div>
+                      </FormSection>
+                      {/* Section 4: Account Security */}
+                      <FormSection
+                        title="Account Security"
+                        description="Your sign-in credentials once registration is approved."
+                        icon={LockKeyhole}
+                      >
+                        <div className="sm:col-span-2">
+                          <Field
+                            label="Official Email Address"
+                            icon={Mail}
+                            type="email"
+                            value={email}
+                            onChange={setEmail}
+                            placeholder="student@bipsu.edu.ph"
+                            required
+                            autoComplete="email"
+                            helper="Use your institutional or primary email address."
+                          />
+                        </div>
+                        <Field
+                          label="Password"
+                          icon={Lock}
+                          type="password"
+                          value={password}
+                          onChange={setPassword}
+                          placeholder="At least 8 characters"
+                          required
+                          autoComplete="new-password"
+                          helper="Minimum 8 characters."
+                        />
+                        <Field
+                          label="Confirm Password"
+                          icon={Lock}
+                          type="password"
+                          value={confirmPassword}
+                          onChange={setConfirmPassword}
+                          placeholder="Re-enter your password"
+                          required
+                          autoComplete="new-password"
                         />
                       </FormSection>
-                    </div>
-                  )}
 
-                  {mode === 'register' ? (
-                    <FormSection title="Account Security">
-                      <Field label="Email Address" icon={Mail} type="email" value={email} onChange={setEmail} placeholder="student@bipsu.edu.ph" required />
-                      <Field label="Password" icon={Lock} type="password" value={password} onChange={setPassword} placeholder="Enter your password" required />
-                      <Field label="Confirm Password" icon={Lock} type="password" value={confirmPassword} onChange={setConfirmPassword} placeholder="Re-enter your password" required />
-                    </FormSection>
+                      {/* Verification Notice */}
+                      <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3.5 text-xs text-blue-900 dark:border-blue-900/50 dark:bg-blue-950/30 dark:text-blue-200 flex items-start gap-2.5">
+                        <ShieldCheck className="h-4 w-4 text-blue-600 shrink-0 mt-0.5" />
+                        <p className="leading-relaxed">
+                          <span className="font-bold">Approval Notice:</span> Student submissions are verified by NSTP administration against University Registrar records. You will receive access once your account is verified.
+                        </p>
+                      </div>
+                    </div>
                   ) : (
-                    <>
-                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                        {(['student', 'facilitator', 'coordinator', 'admin'] as const).map((role) => (
-                          <button
-                            key={role}
-                            type="button"
-                            onClick={() => selectDemoRole(role)}
-                            className={`rounded-xl px-2.5 py-2.5 text-center text-xs font-bold uppercase tracking-tight transition-colors sm:text-sm ${
-                              loginRole === role
-                                ? 'bg-blue-700 text-white shadow-sm ring-2 ring-blue-500/20'
-                                : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300'
-                            }`}
-                          >
-                            {role}
-                          </button>
-                        ))}
+                    <div className="space-y-4">
+                      {/* Role Selector */}
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                          Workspace Role
+                        </label>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                          {(['student', 'facilitator', 'coordinator', 'admin'] as const).map((role) => (
+                            <button
+                              key={role}
+                              type="button"
+                              onClick={() => selectDemoRole(role)}
+                              className={`flex items-center justify-center gap-1.5 rounded-xl border py-2.5 px-2 text-xs font-bold uppercase tracking-tight transition-all ${
+                                loginRole === role
+                                  ? 'border-[#06245c] bg-[#06245c] text-white shadow-xs dark:border-blue-500 dark:bg-blue-600'
+                                  : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-300'
+                              }`}
+                            >
+                              <span>{role}</span>
+                            </button>
+                          ))}
+                        </div>
                       </div>
 
                       {loginRole === 'coordinator' && (
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Pillar:</span>
+                        <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 p-2 dark:border-slate-800 dark:bg-slate-900">
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 pl-1 dark:text-slate-400">
+                            Pillar:
+                          </span>
                           {COORDINATOR_ACCOUNTS.map((c) => (
                             <button
                               key={c.scope}
                               type="button"
                               onClick={() => selectCoordinatorPillar(c.scope)}
-                              className={`flex-1 rounded-lg px-2 py-1 text-center text-xs font-bold transition-colors ${
+                              className={`flex-1 rounded-lg py-1.5 px-2 text-center text-xs font-bold transition-all ${
                                 selectedCoordPillar === c.scope
-                                  ? 'bg-blue-700 text-white shadow-xs'
-                                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                  ? 'bg-[#06245c] text-white shadow-xs dark:bg-blue-600'
+                                  : 'border border-slate-200 bg-white text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300'
                               }`}
                             >
                               {c.label}
@@ -1210,77 +1429,92 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         </div>
                       )}
 
-                      {/* Seeded Account Indicator Card */}
-                      {(() => {
+                      {/* Developer Quick-Fill Helper (DEV only, completely hidden in production) */}
+                      {import.meta.env.DEV && (() => {
                         const activeCreds = loginRole === 'coordinator'
                           ? (COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0])
                           : SEEDED_CREDENTIALS[loginRole];
 
                         return (
-                          <div className="rounded-xl border border-blue-200 bg-gradient-to-r from-blue-50/80 to-indigo-50/60 p-3.5 text-left dark:border-blue-900/50 dark:from-blue-950/40 dark:to-indigo-950/30">
+                          <div className="rounded-xl border border-amber-300/80 bg-amber-50/70 p-3 text-left dark:border-amber-500/30 dark:bg-amber-950/20">
                             <div className="flex items-center justify-between gap-2">
-                              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-blue-900 dark:text-blue-200">
-                                <Sparkles className="h-3.5 w-3.5 text-amber-500" />
-                                {activeCreds.title}
+                              <span className="inline-flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-amber-900 dark:text-amber-200">
+                                <Sparkles className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" />
+                                Dev Tool: {activeCreds.title}
                               </span>
-                              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-[11px] font-semibold text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
-                                {activeCreds.badge}
-                              </span>
-                            </div>
-                            <div className="mt-1.5 flex items-center justify-between">
-                              <p className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                                Account: <span className="font-semibold text-slate-900 dark:text-white">{activeCreds.name}</span>
-                              </p>
-                              <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400">
+                              <span className="font-mono text-[10px] text-amber-700 dark:text-amber-300">
                                 PW: {SEEDED_PASSWORD}
                               </span>
                             </div>
-                            <p className="mt-1 text-[11px] leading-relaxed text-slate-600 dark:text-slate-300">
-                              {activeCreds.features[0]}
+                            <p className="mt-1 text-xs text-slate-700 dark:text-slate-300">
+                              Target account: <span className="font-semibold text-slate-900 dark:text-white">{activeCreds.name}</span> ({activeCreds.identifier})
                             </p>
-                            {import.meta.env.DEV && (
-                              <div className="mt-2.5 pt-2 border-t border-blue-200/60 dark:border-blue-900/40">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    if (loginRole === 'coordinator') {
-                                      selectCoordinatorPillar(selectedCoordPillar, true);
-                                    } else {
-                                      selectDemoRole(loginRole, true);
-                                    }
-                                  }}
-                                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-blue-700 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-200"
-                                >
-                                  <Sparkles className="h-3 w-3 text-amber-500" />
-                                  Quick Login as {activeCreds.name} (via POST /auth/login)
-                                </button>
-                              </div>
-                            )}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (loginRole === 'coordinator') {
+                                  selectCoordinatorPillar(selectedCoordPillar, true);
+                                } else {
+                                  selectDemoRole(loginRole, true);
+                                }
+                              }}
+                              className="mt-2 inline-flex items-center gap-1.5 text-xs font-bold text-blue-700 hover:text-blue-900 dark:text-blue-400 dark:hover:text-blue-200 cursor-pointer"
+                            >
+                              <Sparkles className="h-3 w-3 text-amber-500" />
+                              One-Click Fill & Sign In
+                            </button>
                           </div>
                         );
                       })()}
 
+                      {/* Identifier and Password Fields */}
                       <Field
-                        label={loginRole === 'student' ? 'Student ID' : 'Email'}
-                        icon={Mail}
+                        label={loginRole === 'student' ? 'BiPSU Student ID' : 'Institutional Email'}
+                        icon={loginRole === 'student' ? IdCard : Mail}
                         type="text"
                         value={email}
                         onChange={setEmail}
-                        placeholder={loginRole === 'student' ? 'Enter your Student ID' : 'Enter your email'}
+                        placeholder={loginRole === 'student' ? 'e.g. 2024-12345' : 'name@bipsu.edu.ph'}
                         required
+                        autoComplete={loginRole === 'student' ? 'username' : 'email'}
                       />
-                      <Field label="Password" icon={Lock} type="password" value={password} onChange={setPassword} placeholder="Enter your password" required />
-                    </>
+                      <Field
+                        label="Password"
+                        icon={Lock}
+                        type="password"
+                        value={password}
+                        onChange={setPassword}
+                        placeholder="Enter your password"
+                        required
+                        autoComplete="current-password"
+                      />
+                    </div>
                   )}
 
-                  <button type="submit" className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-blue-700 py-3 font-semibold text-white shadow-sm ring-1 ring-blue-800/10 hover:bg-blue-800 active:bg-blue-900">
-                    {mode === 'login' ? 'Continue to Dashboard' : 'Submit Registration'}
-                    <ArrowRight className="h-4 w-4" />
-                  </button>
+                  {/* Primary Submit Button */}
+                  <div className="pt-2">
+                    <button
+                      type="submit"
+                      disabled={isSubmitting}
+                      className="inline-flex min-h-[48px] w-full items-center justify-center gap-2 rounded-xl bg-[#06245c] py-3 text-sm font-bold text-white shadow-sm transition-all hover:bg-[#0b4ea2] active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-60 dark:bg-blue-600 dark:hover:bg-blue-700 cursor-pointer"
+                    >
+                      {isSubmitting ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          <span>{mode === 'login' ? 'Signing in…' : 'Submitting Registration…'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span>{mode === 'login' ? 'Sign In to Dashboard' : 'Submit Student Registration'}</span>
+                          <ArrowRight className="h-4 w-4" />
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </form>
+              </div>
 
-              </section>
-            </div>
+            </section>
           </div>
         </div>
       )}
@@ -1504,72 +1738,172 @@ function TrustBand() {
   );
 }
 
-function FormSection({ title, children }: { title: string; children: React.ReactNode }) {
+function FormSection({
+  title,
+  description,
+  icon: Icon,
+  children,
+}: {
+  title: string;
+  description?: string;
+  icon?: any;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4 dark:border-slate-700 dark:bg-slate-900/50">
-      <h3 className="mb-4 text-sm font-black uppercase tracking-[0.16em] text-blue-800 dark:text-blue-200">{title}</h3>
-      <div className="grid gap-4 md:grid-cols-2">{children}</div>
+    <section className="rounded-2xl border border-slate-200/90 bg-slate-50/60 p-4 sm:p-5 dark:border-slate-800 dark:bg-slate-900/40">
+      <div className="mb-4 flex items-start gap-2.5 border-b border-slate-200/60 pb-3 dark:border-slate-800">
+        {Icon && (
+          <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-blue-100/70 text-[#06245c] dark:bg-blue-900/30 dark:text-blue-300">
+            <Icon className="h-4 w-4" />
+          </div>
+        )}
+        <div className="min-w-0">
+          <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-slate-900 dark:text-slate-100">
+            {title}
+          </h3>
+          {description && (
+            <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+              {description}
+            </p>
+          )}
+        </div>
+      </div>
+      <div className="grid gap-3.5 sm:grid-cols-2">{children}</div>
     </section>
   );
 }
 
 function RequiredMark({ required, optional }: { required?: boolean; optional?: boolean }) {
-  if (required) return <span className="text-rose-600 dark:text-rose-300">*</span>;
-  if (optional) return <span className="text-xs font-semibold text-slate-400">Optional</span>;
+  if (required) return <span className="text-rose-500 font-bold ml-0.5">*</span>;
+  if (optional) return <span className="text-[10px] font-semibold text-slate-400 dark:text-slate-500">Optional</span>;
   return null;
 }
 
-function Field({ label, icon: Icon, value, onChange, placeholder, type = 'text', required = false, optional = false, helper, readOnly = false }: { label: string; icon?: any; value: string; onChange: (value: string) => void; placeholder: string; type?: string; required?: boolean; optional?: boolean; helper?: string; readOnly?: boolean }) {
+function Field({
+  label,
+  icon: Icon,
+  value,
+  onChange,
+  placeholder,
+  type = 'text',
+  required = false,
+  optional = false,
+  helper,
+  readOnly = false,
+  autoComplete,
+}: {
+  label: string;
+  icon?: any;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  type?: string;
+  required?: boolean;
+  optional?: boolean;
+  helper?: string;
+  readOnly?: boolean;
+  autoComplete?: string;
+}) {
   const isPassword = type === 'password';
   const [showPassword, setShowPassword] = useState(false);
   const resolvedType = isPassword ? (showPassword ? 'text' : 'password') : type;
+
   return (
-    <label className="block">
-      <span className="mb-2 flex items-center justify-between gap-2 text-sm font-bold text-slate-700 dark:text-slate-200">
-        <span>{label} <RequiredMark required={required} /></span>
+    <label className="block text-left">
+      <span className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+        <span>
+          {label} <RequiredMark required={required} />
+        </span>
         <RequiredMark optional={optional} />
       </span>
       <span className="relative block">
-        {Icon && <Icon className="absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />}
+        {Icon && (
+          <Icon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        )}
         <input
           type={resolvedType}
           value={value}
           onChange={(event) => onChange(event.target.value)}
-          className={`w-full rounded-xl border border-blue-200 py-3 ${Icon ? 'pl-10' : 'pl-4'} ${isPassword ? 'pr-12' : 'pr-4'} text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 dark:border-slate-700 dark:text-slate-100 ${readOnly ? 'bg-blue-50 text-slate-600 dark:bg-slate-950 dark:text-slate-300' : 'bg-white dark:bg-slate-900'}`}
+          className={`h-11 w-full rounded-xl border border-slate-200 py-2.5 ${
+            Icon ? 'pl-10' : 'pl-3.5'
+          } ${
+            isPassword ? 'pr-11' : 'pr-3.5'
+          } text-xs font-semibold text-slate-800 shadow-2xs transition-colors placeholder:text-slate-400 focus:border-blue-600 focus:outline-hidden focus:ring-2 focus:ring-blue-600/20 dark:border-slate-700 dark:text-slate-100 sm:text-sm ${
+            readOnly
+              ? 'bg-slate-100 text-slate-500 dark:bg-slate-950 dark:text-slate-400 cursor-not-allowed'
+              : 'bg-white dark:bg-slate-900'
+          }`}
           placeholder={placeholder}
           required={required}
           readOnly={readOnly}
+          autoComplete={autoComplete}
         />
         {isPassword && (
-          <button type="button" onClick={() => setShowPassword((prev) => !prev)} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200" tabIndex={-1}>
-            {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+          <button
+            type="button"
+            onClick={() => setShowPassword((prev) => !prev)}
+            aria-label={showPassword ? 'Hide password' : 'Show password'}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-slate-600 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-blue-500 rounded-md dark:hover:text-slate-200"
+          >
+            {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
         )}
       </span>
-      {helper && <span className="mt-2 block text-xs font-medium text-slate-500 dark:text-slate-400">{helper}</span>}
+      {helper && <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{helper}</span>}
     </label>
   );
 }
 
-function SelectField({ label, value, onChange, options, placeholder, required = false, disabled = false, helper }: { label: string; value: string; onChange: (value: string) => void; options: string[]; placeholder: string; required?: boolean; disabled?: boolean; helper?: string }) {
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+  placeholder,
+  required = false,
+  disabled = false,
+  helper,
+  icon: Icon,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  required?: boolean;
+  disabled?: boolean;
+  helper?: string;
+  icon?: any;
+}) {
   return (
-    <label className="block">
-      <span className="mb-2 flex items-center gap-1 text-sm font-bold text-slate-700 dark:text-slate-200">
-        {label} <RequiredMark required={required} />
+    <label className="block text-left">
+      <span className="mb-1.5 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+        <span>
+          {label} <RequiredMark required={required} />
+        </span>
       </span>
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-blue-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/30 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-950"
-        required={required}
-        disabled={disabled}
-      >
-        <option value="">{placeholder}</option>
-        {options.map((item) => (
-          <option key={item} value={item}>{item}</option>
-        ))}
-      </select>
-      {helper && <span className="mt-2 block text-xs font-medium text-slate-500 dark:text-slate-400">{helper}</span>}
+      <div className="relative">
+        {Icon && (
+          <Icon className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        )}
+        <select
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          disabled={disabled}
+          required={required}
+          className={`h-11 w-full rounded-xl border border-slate-200 bg-white py-2.5 ${
+            Icon ? 'pl-10' : 'pl-3.5'
+          } pr-8 text-xs font-semibold text-slate-800 shadow-2xs transition-colors focus:border-blue-600 focus:outline-hidden focus:ring-2 focus:ring-blue-600/20 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:disabled:bg-slate-950 sm:text-sm`}
+        >
+          <option value="">{placeholder}</option>
+          {options.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+      </div>
+      {helper && <span className="mt-1 block text-[11px] text-slate-500 dark:text-slate-400">{helper}</span>}
     </label>
   );
 }
