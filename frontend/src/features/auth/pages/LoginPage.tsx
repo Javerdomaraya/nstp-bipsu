@@ -323,6 +323,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [studentId, setStudentId] = useState('');
   const [school, setSchool] = useState('');
   const [degreeProgram, setDegreeProgram] = useState('');
+  const [customDegreeProgram, setCustomDegreeProgram] = useState('');
   const [preferredMtsBranch, setPreferredMtsBranch] = useState<'MTS (Army)' | 'MTS (Navy)'>('MTS (Army)');
   const [preferredTrack, setPreferredTrack] = useState<string>('CWTS');
   const [yearLevel, setYearLevel] = useState('');
@@ -340,9 +341,11 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
   const [provincesLoading, setProvincesLoading] = useState(false);
   const [provincialAddress, setProvincialAddress] = useState('');
   const [contactNumber, setContactNumber] = useState('');
-  const [email, setEmail] = useState<string>(() => (import.meta.env.DEV ? SEEDED_CREDENTIALS.student.identifier : ''));
-  const [password, setPassword] = useState<string>(() => (import.meta.env.DEV ? SEEDED_PASSWORD : ''));
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [loginIdentifier, setLoginIdentifier] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -355,7 +358,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     return localStorage.getItem('nstp-theme') === 'dark' ? 'dark' : 'light';
   });
   const [selectedCoordPillar, setSelectedCoordPillar] = useState<'CWTS' | 'LTS' | 'MTS'>('CWTS');
-  const selectedSchoolPrograms = BIPSU_PROGRAMS.find((item) => item.school === school)?.programs || [];
+  const baseSchoolPrograms = BIPSU_PROGRAMS.find((item) => item.school === school)?.programs || [];
+  const selectedSchoolPrograms = school ? [...baseSchoolPrograms, 'Other (Please specify)'] : [];
 
   useEffect(() => {
     if (!province) {
@@ -497,7 +501,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
           return;
         }
 
-        setPassword('');
+        setLoginPassword('');
         onLogin(authenticatedUser);
         return;
       }
@@ -512,9 +516,9 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         return;
       }
 
-      setError(`Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`);
+      setError(`Invalid ${loginRole === 'student' ? 'Student ID or email' : 'email'} or password.`);
     } catch (err: any) {
-      const msg = err?.payload?.error || err?.payload?.message || err?.message || `Invalid ${loginRole === 'student' ? 'Student ID' : 'email'} or password.`;
+      const msg = err?.payload?.error || err?.payload?.message || err?.message || `Invalid ${loginRole === 'student' ? 'Student ID or email' : 'email'} or password.`;
       setError(msg);
     } finally {
       setIsSubmitting(false);
@@ -526,8 +530,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     if (import.meta.env.DEV) {
       const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === pillar);
       if (found) {
-        setEmail(found.identifier);
-        setPassword(found.password);
+        setLoginIdentifier(found.identifier);
+        setLoginPassword(found.password);
         if (autoLogin) {
           void performLogin(found.identifier, found.password, 'coordinator');
         }
@@ -538,29 +542,22 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
 
   const selectDemoRole = (role: 'student' | 'facilitator' | 'coordinator' | 'admin', autoLogin = false) => {
     setLoginRole(role);
-    if (import.meta.env.DEV) {
+    setError(null);
+    if (autoLogin && import.meta.env.DEV) {
       if (role === 'coordinator') {
         const found = COORDINATOR_ACCOUNTS.find((c) => c.scope === selectedCoordPillar) || COORDINATOR_ACCOUNTS[0];
-        setEmail(found.identifier);
-        setPassword(found.password);
-        if (autoLogin) {
-          void performLogin(found.identifier, found.password, role);
-        }
+        setLoginIdentifier(found.identifier);
+        setLoginPassword(found.password);
+        void performLogin(found.identifier, found.password, role);
       } else {
         const creds = SEEDED_CREDENTIALS[role];
         if (creds) {
-          setEmail(creds.identifier);
-          setPassword(creds.password);
-          if (autoLogin) {
-            void performLogin(creds.identifier, creds.password, role);
-          }
+          setLoginIdentifier(creds.identifier);
+          setLoginPassword(creds.password);
+          void performLogin(creds.identifier, creds.password, role);
         }
       }
-    } else {
-      setEmail('');
-      setPassword('');
     }
-    setError(null);
   };
 
   const openAuth = (nextMode: LoginMode = 'login', initialRole: 'student' | 'facilitator' | 'coordinator' | 'admin' = 'student') => {
@@ -568,20 +565,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
     setShowAuth(true);
     setError(null);
     setNotice(null);
-    if (nextMode === 'login') {
-      if (import.meta.env.DEV) {
-        selectDemoRole(initialRole);
-      } else {
-        setLoginRole(initialRole);
-        setEmail('');
-        setPassword('');
-      }
-    } else {
-      setLoginRole(initialRole);
-      setEmail('');
-      setPassword('');
-      setConfirmPassword('');
-    }
+    setLoginRole(initialRole);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -596,7 +580,9 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         return;
       }
 
-      if (!surname.trim() || !firstName.trim() || !school || !degreeProgram.trim() || !gender.trim() || !birthdate.trim() || !province || !barangay.trim() || !contactNumber.trim() || !email.trim() || !password || !confirmPassword) {
+      const effectiveDegreeProgram = (degreeProgram === 'Other (Please specify)' ? customDegreeProgram : degreeProgram).trim();
+
+      if (!surname.trim() || !firstName.trim() || !school || !effectiveDegreeProgram || !gender.trim() || !birthdate.trim() || !province || !barangay.trim() || !contactNumber.trim() || !email.trim() || !password || !confirmPassword) {
         setError('Complete the required official student profile fields before submission.');
         return;
       }
@@ -622,8 +608,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         return;
       }
 
-      if (isProgramWithMajor(degreeProgram) && !major) {
-        setError(`Major is required for ${degreeProgram}.`);
+      if (isProgramWithMajor(effectiveDegreeProgram) && !major) {
+        setError(`Major is required for ${effectiveDegreeProgram}.`);
         return;
       }
 
@@ -648,7 +634,6 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       }
 
       const pendingRequest = {
-        id: `pending-${Math.random().toString(36).slice(2, 10)}`,
         studentId: cleanStudentId,
         surname: surname.trim(),
         firstName: firstName.trim(),
@@ -658,9 +643,9 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         password,
         school,
         department: school,
-        degreeProgram: degreeProgram.trim(),
+        degreeProgram: effectiveDegreeProgram,
         yearLevel,
-        ...(isProgramWithMajor(degreeProgram) ? { major } : {}),
+        ...(isProgramWithMajor(effectiveDegreeProgram) ? { major } : {}),
         gender,
         birthdate,
         houseStreetPurok: houseStreetPurok.trim(),
@@ -671,12 +656,11 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         currentAddress: buildCurrentAddress(houseStreetPurok, barangay, assignedMunicipality, province),
         provincialAddress: provincialAddress.trim(),
         contactNumber: contactNumber.trim(),
-        preferredComponent: isCriminologyProgram(degreeProgram, school)
+        preferredComponent: isCriminologyProgram(effectiveDegreeProgram, school)
           ? preferredMtsBranch
-          : isTeacherEducationProgram(degreeProgram, school)
+          : isTeacherEducationProgram(effectiveDegreeProgram, school)
           ? 'LTS'
           : preferredTrack || 'CWTS',
-        createdAt: new Date().toISOString(),
       };
 
       setIsSubmitting(true);
@@ -688,12 +672,14 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         }
 
         setNotice('Registration submitted. Please wait for admin approval before signing in.');
+        const registeredIdentifier = cleanStudentId || email.trim();
         setSurname('');
         setFirstName('');
         setMiddleName('');
         setStudentId('');
         setSchool('');
         setDegreeProgram('');
+        setCustomDegreeProgram('');
         setYearLevel('');
         setMajor('');
         setGender('');
@@ -709,6 +695,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
         setEmail('');
         setPassword('');
         setConfirmPassword('');
+        setLoginIdentifier(registeredIdentifier);
+        setLoginPassword('');
         setMode('login');
       } catch (err: any) {
         setError(err?.payload?.error || err?.message || 'Unable to submit your registration. Please try again.');
@@ -718,19 +706,21 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
       return;
     }
 
-    const loginInput = email.trim();
-    if (!loginInput || !password) {
-      setError(`Please enter your ${loginRole === 'student' ? 'Student ID' : 'email'} and password.`);
+    const loginInput = loginIdentifier.trim();
+    if (!loginInput || !loginPassword) {
+      setError(`Please enter your ${loginRole === 'student' ? 'Student ID or email' : 'email'} and password.`);
       return;
     }
 
     try {
-      await performLogin(loginInput, password, loginRole);
+      await performLogin(loginInput, loginPassword, loginRole);
     } catch (err: any) {
       const msg = err?.payload?.error || err?.payload?.message || err?.message || 'Failed to sign in. Please check your credentials.';
       setError(msg);
     }
   };
+
+  const effectiveDegreeProgram = (degreeProgram === 'Other (Please specify)' ? customDegreeProgram : degreeProgram).trim();
 
   return (
     <div className="landing-page min-h-screen bg-[#edf5fb] text-[#061a42] dark:bg-[#08111f] dark:text-slate-100">
@@ -1181,6 +1171,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           onChange={(value) => {
                             setSchool(value);
                             setDegreeProgram('');
+                            setCustomDegreeProgram('');
                             setMajor('');
                           }}
                           required
@@ -1192,6 +1183,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           value={degreeProgram}
                           onChange={(value) => {
                             setDegreeProgram(value);
+                            if (value !== 'Other (Please specify)') setCustomDegreeProgram('');
                             if (!isProgramWithMajor(value)) setMajor('');
                           }}
                           required
@@ -1200,7 +1192,21 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           disabled={!school}
                         />
 
-                        {degreeProgram && isCriminologyProgram(degreeProgram, school) && (
+                        {degreeProgram === 'Other (Please specify)' && (
+                          <div className="sm:col-span-2">
+                            <Field
+                              label="Specific Degree Program"
+                              icon={GraduationCap}
+                              value={customDegreeProgram}
+                              onChange={setCustomDegreeProgram}
+                              placeholder="Enter your degree program (e.g., BS in Information Technology)"
+                              required
+                              helper="Enter your official BiPSU degree program as stated on your certificate of registration."
+                            />
+                          </div>
+                        )}
+
+                        {effectiveDegreeProgram && isCriminologyProgram(effectiveDegreeProgram, school) && (
                           <div className="sm:col-span-2 rounded-xl border border-amber-300 bg-amber-50 p-3.5 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-100">
                             <div className="flex items-center gap-1.5 font-bold text-amber-800 dark:text-amber-200 mb-1">
                               <Shield className="w-4 h-4 text-amber-600" />
@@ -1220,7 +1226,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           </div>
                         )}
 
-                        {degreeProgram && isTeacherEducationProgram(degreeProgram, school) && (
+                        {effectiveDegreeProgram && isTeacherEducationProgram(effectiveDegreeProgram, school) && (
                           <div className="sm:col-span-2 rounded-xl border border-blue-300 bg-blue-50 p-3.5 text-xs text-blue-950 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-100">
                             <div className="flex items-center gap-1.5 font-bold text-blue-800 dark:text-blue-200 mb-1">
                               <Shield className="w-4 h-4 text-blue-600" />
@@ -1232,7 +1238,7 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           </div>
                         )}
 
-                        {degreeProgram && !isCriminologyProgram(degreeProgram, school) && !isTeacherEducationProgram(degreeProgram, school) && (
+                        {effectiveDegreeProgram && !isCriminologyProgram(effectiveDegreeProgram, school) && !isTeacherEducationProgram(effectiveDegreeProgram, school) && (
                           <div className="sm:col-span-2">
                             <SelectField
                               label="Preferred NSTP Component Track"
@@ -1261,13 +1267,13 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                           placeholder="Select year level"
                         />
 
-                        {isProgramWithMajor(degreeProgram) && (
+                        {isProgramWithMajor(effectiveDegreeProgram) && (
                           <SelectField
                             label="Major"
                             value={major}
                             onChange={setMajor}
                             required
-                            options={degreeProgram === INDUSTRIAL_TECHNOLOGY_PROGRAM ? INDUSTRIAL_TECHNOLOGY_MAJORS : SECONDARY_EDUCATION_MAJORS}
+                            options={effectiveDegreeProgram === INDUSTRIAL_TECHNOLOGY_PROGRAM ? INDUSTRIAL_TECHNOLOGY_MAJORS : SECONDARY_EDUCATION_MAJORS}
                             placeholder="Select major"
                           />
                         )}
@@ -1490,12 +1496,12 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
 
                       {/* Identifier and Password Fields */}
                       <Field
-                        label={loginRole === 'student' ? 'BiPSU Student ID' : 'Institutional Email'}
+                        label={loginRole === 'student' ? 'BiPSU Student ID or Email' : 'Institutional Email'}
                         icon={loginRole === 'student' ? IdCard : Mail}
                         type="text"
-                        value={email}
-                        onChange={setEmail}
-                        placeholder={loginRole === 'student' ? 'e.g. 2024-12345' : 'name@bipsu.edu.ph'}
+                        value={loginIdentifier}
+                        onChange={setLoginIdentifier}
+                        placeholder={loginRole === 'student' ? 'Enter Student ID or registered email' : 'name@bipsu.edu.ph'}
                         required
                         autoComplete={loginRole === 'student' ? 'username' : 'email'}
                       />
@@ -1503,8 +1509,8 @@ export default function LoginPage({ onLogin }: { onLogin: (user: AuthenticatedUs
                         label="Password"
                         icon={Lock}
                         type="password"
-                        value={password}
-                        onChange={setPassword}
+                        value={loginPassword}
+                        onChange={setLoginPassword}
                         placeholder="Enter your password"
                         required
                         autoComplete="current-password"

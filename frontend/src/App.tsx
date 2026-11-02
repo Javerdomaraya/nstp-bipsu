@@ -536,6 +536,13 @@ export default function App() {
         user={studentUser}
         onLogout={handleLogout}
         preferredComponent={preferredComponent}
+        onBack={() => {
+          const updatedUser: StudentUser = {
+            ...studentUser,
+            generalEducationComplete: false,
+          };
+          setUser(updatedUser);
+        }}
         onComplete={(score, assignment) => {
           const updatedUser: StudentUser = {
             ...studentUser,
@@ -1013,7 +1020,9 @@ export default function App() {
 
     return (
       <>
-        <AdminDashboard initialView={adminView as any} onNavigateApp={(target) => setActiveSection(target as ShellSection)} onLogout={handleLogout} />
+        <React.Suspense fallback={<AppShellSkeleton />}>
+          <AdminDashboard initialView={adminView as any} onNavigateApp={(target) => setActiveSection(target as ShellSection)} onLogout={handleLogout} />
+        </React.Suspense>
         {showLogoutModal && renderLogoutModal()}
       </>
     );
@@ -1022,7 +1031,9 @@ export default function App() {
   if (user.role === 'coordinator') {
     return (
       <>
-        <CoordinatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
+        <React.Suspense fallback={<AppShellSkeleton />}>
+          <CoordinatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
+        </React.Suspense>
         {showLogoutModal && renderLogoutModal()}
       </>
     );
@@ -1031,7 +1042,9 @@ export default function App() {
   if (user.role === 'facilitator') {
     return (
       <>
-        <FacilitatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
+        <React.Suspense fallback={<AppShellSkeleton />}>
+          <FacilitatorDashboard user={user} onLogout={handleLogout} onNavigate={(target) => setActiveSection(target as ShellSection)} />
+        </React.Suspense>
         {showLogoutModal && renderLogoutModal()}
       </>
     );

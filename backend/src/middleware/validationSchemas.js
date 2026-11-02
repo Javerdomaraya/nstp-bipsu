@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const registerSchema = z.object({
   body: z.object({
+    id: z.string().optional(),
+    name: z.string().optional(),
     email: z.string().email('Invalid email address'),
     password: z.string().min(8, 'Password must be at least 8 characters'),
     studentId: z.string().min(1, 'Student ID is required'),
@@ -23,6 +25,8 @@ export const registerSchema = z.object({
     currentAddress: z.string().optional(),
     provincialAddress: z.string().optional(),
     assignedMunicipality: z.string().optional(),
+    preferredComponent: z.string().optional(),
+    createdAt: z.string().optional(),
   }).strict(),
   params: z.object({}).optional(),
   query: z.object({}).optional(),

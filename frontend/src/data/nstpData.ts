@@ -625,6 +625,7 @@ export const BIPSU_PROGRAMS = [
     shortName: 'STCS',
     programs: [
       'BS in Computer Science',
+      'BS in Information Technology',
       'BS in Information Systems',
       'BS in Industrial Technology',
     ],

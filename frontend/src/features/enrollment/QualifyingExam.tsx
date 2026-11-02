@@ -13,7 +13,7 @@ export type QualifyingQuestion = {
   order?: number;
 };
 
-export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout }: { user: StudentUser; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void }) {
+export default function QualifyingExam({ user, preferredComponent, onComplete, onLogout, onBack }: { user: StudentUser; preferredComponent: NstpComponent; onComplete: (score: number | null, assignment?: QualifyingExamResult) => void; onLogout: () => void; onBack?: () => void }) {
   const [questions, setQuestions] = useState<QualifyingQuestion[]>([]);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
@@ -343,6 +343,15 @@ export default function QualifyingExam({ user, preferredComponent, onComplete, o
         {loadError && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-6 text-red-800 dark:border-red-900/40 dark:bg-red-900/20 dark:text-red-200">
             <p className="font-semibold">{loadError}</p>
+            {onBack && (
+              <button
+                type="button"
+                onClick={onBack}
+                className="mt-4 inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-xs sm:text-sm font-semibold text-white shadow-xs transition hover:bg-red-800 active:scale-95 cursor-pointer"
+              >
+                ← Return to Common Modules (General Education)
+              </button>
+            )}
           </div>
         )}
 

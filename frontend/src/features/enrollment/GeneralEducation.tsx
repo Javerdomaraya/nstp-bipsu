@@ -7,6 +7,7 @@ import { type NstpModule, type NstpAssessment } from '../../data/nstpData';
 import type { StudentUser } from '../../services/authUser';
 import { toSafeEmbedUrl, toSafeExternalUrl } from '../../utils/moduleUrls';
 import { apiGet, apiPost, apiPut } from '../../services/apiClient';
+import { toast } from 'sonner';
 
 const shuffleArray = <T,>(array: T[]): T[] => {
   const copy = [...array];
@@ -179,6 +180,14 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
     const score = total > 0 ? Math.round((correct / total) * 100) : 0;
 
     const linked = getLinkedAssessment(selectedModule.id);
+    const passingScore = Number(linked?.passingScore ?? 70);
+
+    if (score < passingScore) {
+      toast.error(`Score: ${score}%. Passing score is ${passingScore}%. Please review the seminar and retake the assessment.`);
+      setAssessmentActive(false);
+      return;
+    }
+
     if (linked && assessmentQuestions.length > 0) {
       try {
         const submissionAnswers = assessmentQuestions.map((q, idx) => ({
@@ -188,15 +197,17 @@ export default function GeneralEducation({ user, onComplete, onLogout }: { user:
         await apiPost(`/nstp/students/me/assessments/${linked.id}/attempts`, {
           answers: submissionAnswers,
         });
-      } catch (err) {
+      } catch (err: any) {
         console.warn('Unable to record assessment attempt on server:', err);
       }
     }
 
     try {
       await apiPost(`/nstp/students/me/modules/${selectedModule.id}/complete`, {});
-    } catch (err) {
-      console.warn('Unable to complete module on server:', err);
+      toast.success(`${selectedModule.title} completed successfully!`);
+    } catch (err: any) {
+      toast.error(err?.message || 'Unable to complete module on server.');
+      return;
     }
 
     const updatedProgress: Record<string, SeminarProgress> = {

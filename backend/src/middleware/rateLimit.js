@@ -64,8 +64,8 @@ export function createRateLimiter({ limit, windowMs, keyPrefix }) {
 
 export const softReadLimiter = createRateLimiter({ keyPrefix: 'api-read', limit: 300, windowMs: 60_000 });
 export const strictWriteLimiter = createRateLimiter({ keyPrefix: 'api-write', limit: 80, windowMs: 60_000 });
-export const loginLimiter = createRateLimiter({ keyPrefix: 'login', limit: 10, windowMs: 900_000 });
-export const registrationLimiter = createRateLimiter({ keyPrefix: 'registration', limit: 5, windowMs: 3_600_000 });
-export const passwordResetLimiter = createRateLimiter({ keyPrefix: 'password-reset', limit: 5, windowMs: 3_600_000 });
+export const loginLimiter = createRateLimiter({ keyPrefix: 'login', limit: process.env.NODE_ENV === 'production' ? 10 : 1000, windowMs: 900_000 });
+export const registrationLimiter = createRateLimiter({ keyPrefix: 'registration', limit: process.env.NODE_ENV === 'production' ? 5 : 1000, windowMs: 3_600_000 });
+export const passwordResetLimiter = createRateLimiter({ keyPrefix: 'password-reset', limit: process.env.NODE_ENV === 'production' ? 5 : 1000, windowMs: 3_600_000 });
 export const publicAddressLimiter = createRateLimiter({ keyPrefix: 'address', limit: 120, windowMs: 60_000 });
 export const expensiveOperationLimiter = createRateLimiter({ keyPrefix: 'expensive', limit: 20, windowMs: 60_000 });

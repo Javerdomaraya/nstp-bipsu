@@ -8,6 +8,8 @@ import ModulesPage from '../../../pages/ModulesPage';
 import CollapsibleRoleSidebar from '../../../components/layout/CollapsibleRoleSidebar';
 import StudentProfileModal from '../components/StudentProfileModal';
 import AdminGradesView from '../components/AdminGradesView';
+import StudentApprovalTable from '../components/StudentApprovalTable';
+
 import { createEmptyStudent, safeJsonParse, PendingStudentRegistration, NstpStudent, NstpAccount, NstpComponent, NstpRole, BiliranMunicipality, BILIRAN_MUNICIPALITIES, NSTP_COMPONENTS, toNstpComponent, AUDIT_LOG_KEY, type CoordinatorScope } from '../../../data/nstpData';
 import { apiPost, apiPut, apiDel } from '../../../services/apiClient';
 import { toast } from 'sonner';
@@ -124,6 +126,7 @@ const getStudentSchoolYear = (student: NstpStudent) => {
   return `SY ${year}-${year + 1}`;
 };
 
+
 const emptyLookup = () => ({
   total: 0,
   active: 0,
@@ -161,6 +164,8 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const [pendingRegistrations, setPendingRegistrations] = useState<PendingStudentRegistration[]>([]);
   const [approvingRegistrationIds, setApprovingRegistrationIds] = useState<string[]>([]);
   const [registrationApprovalErrors, setRegistrationApprovalErrors] = useState<Record<string, string>>({});
+
+
   const [trainingGroups, setTrainingGroups] = useState<any[]>([]);
   const [filter, setFilter] = useState('all');
   const [search, setSearch] = useState('');
@@ -200,7 +205,7 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
   const { data: serverModules = [], isLoading: modulesLoading } = useModules();
   const { data: serverAssessments = [], isLoading: assessmentsLoading } = useAssessments();
   const { data: serverTrainingGroups = [] } = useTrainingGroups();
-  const { data: serverPendingRegistrations = [] } = usePendingRegistrations();
+  const { data: serverPendingRegistrations = [], isLoading: pendingRegistrationsLoading } = usePendingRegistrations();
   const patchStudentMutation = usePatchStudent();
   const upsertStudentMutation = useUpsertStudent();
   const deleteStudentMutation = useDeleteStudent();
@@ -467,17 +472,20 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     }
   };
 
-  const rejectRegistration = async (registrationId: string) => {
-    const shouldReject = window.confirm('Reject this student registration request?');
-    if (!shouldReject) return;
+  const rejectRegistration = async (registrationId: string, reason?: string) => {
     const registration = pendingRegistrations.find((item) => item.id === registrationId);
     try {
       await apiDel(`/nstp/admin/pending-registrations/${registrationId}`, null);
       persistPendingRegistrations(pendingRegistrations.filter((item) => item.id !== registrationId));
       if (registration) {
-        logAudit('Rejected registration', `${registration.name} (${registration.email})`);
+        logAudit('Rejected registration', `${registration.name} (${registration.email})${reason ? ` - Reason: ${reason}` : ''}`);
       }
       toast.success('Registration request rejected.');
+      try {
+        await queryClient.invalidateQueries({ queryKey: ['pending-registrations'] });
+      } catch {
+        // silent fallback
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Unable to reject registration on server.');
     }
@@ -976,6 +984,9 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
     'MTS (Army)': schoolYearStudents.filter((s) => s.component === 'MTS (Army)').length,
     'MTS (Navy)': schoolYearStudents.filter((s) => s.component === 'MTS (Navy)').length,
   }), [schoolYearStudents]);
+
+
+
 
   const filteredStudents = schoolYearStudents.filter((student) => {
     const matchesFilter = filter === 'all' || student.component === filter;
@@ -1989,21 +2000,33 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
                   )}
                   <div className="min-w-0">
                     <p className="text-[10px] sm:text-xs font-semibold uppercase tracking-[0.18em] text-blue-700 dark:text-blue-300">Administration</p>
-                    <h1 className="truncate text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight text-slate-950 dark:text-white">
-                      {view === 'enrollment' ? 'Student Approvals' :
-                       view === 'coordinators' ? 'Coordinators' :
-                       view === 'facilitators' ? 'Facilitators' :
-                       view === 'municipalities' ? 'Municipalities' :
-                       view === 'students' ? 'Student Roster' :
-                       view === 'modules' ? 'Module Library' :
-                       view === 'assessments' ? 'Assessment Bank' :
-                       view === 'assignments' ? 'Semester Grades' :
-                       view === 'tools' ? 'Reports & Analytics' :
-                       view === 'exports' ? 'Student Profile Layout' :
-                       view === 'account' ? 'Account Settings' :
-                       view === 'settings' ? 'System Settings' :
-                       'Dashboard'}
-                    </h1>
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                      <h1 className="truncate text-lg sm:text-2xl lg:text-3xl font-bold tracking-tight text-slate-950 dark:text-white">
+                        {view === 'enrollment' ? 'Student Approvals' :
+                         view === 'coordinators' ? 'Coordinators' :
+                         view === 'facilitators' ? 'Facilitators' :
+                         view === 'municipalities' ? 'Municipalities' :
+                         view === 'students' ? 'Student Roster' :
+                         view === 'modules' ? 'Module Library' :
+                         view === 'assessments' ? 'Assessment Bank' :
+                         view === 'assignments' ? 'Semester Grades' :
+                         view === 'tools' ? 'Reports & Analytics' :
+                         view === 'exports' ? 'Student Profile Layout' :
+                         view === 'account' ? 'Account Settings' :
+                         view === 'settings' ? 'System Settings' :
+                         'Dashboard'}
+                      </h1>
+                      {view === 'enrollment' && (
+                        <span className="inline-flex items-center rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-semibold text-blue-700 border border-blue-200/70 dark:bg-blue-500/10 dark:text-blue-300 dark:border-blue-500/20">
+                          {pendingRegistrations.length} {pendingRegistrations.length === 1 ? 'pending application' : 'pending applications'}
+                        </span>
+                      )}
+                    </div>
+                    {view === 'enrollment' && (
+                      <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
+                        Review and manage student enrollment applications.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -2075,76 +2098,16 @@ export default function AdminDashboard({ initialView = 'overview', onNavigateApp
             <div className={`grid gap-4 sm:gap-5 p-3.5 sm:p-5 ${view === 'overview' ? 'xl:grid-cols-[minmax(0,1fr)_15rem]' : 'xl:grid-cols-1'}`}>
               <div className="min-w-0 space-y-5">
                 {view === 'enrollment' ? (
-                  <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
-                    <div className="mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-[0.2em] text-blue-700 dark:text-blue-300">Enrollment Module</p>
-                        <h2 className="text-2xl font-semibold text-slate-950 dark:text-white">Student Approvals</h2>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">Approve, reject, and monitor student enrollment from the main admin body.</p>
-                      </div>
-                      <div className="rounded-2xl bg-blue-50 px-4 py-3 text-sm font-semibold text-blue-700 dark:bg-blue-500/10 dark:text-blue-200">{pendingRegistrations.length} pending request{pendingRegistrations.length === 1 ? '' : 's'}</div>
-                    </div>
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[1120px] text-sm">
-                        <thead>
-                          <tr className="border-y border-slate-200 bg-slate-50 text-left text-xs uppercase tracking-[0.08em] text-slate-500 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400">
-                            <th className="px-4 py-3">Student</th>
-                            <th className="px-4 py-3">Email / ID</th>
-                            <th className="px-4 py-3">Program</th>
-                            <th className="px-4 py-3">Year Level</th>
-                            <th className="px-4 py-3">Major</th>
-                            <th className="px-4 py-3">Municipality</th>
-                            <th className="px-4 py-3">Assigned Facilitator</th>
-                            <th className="px-4 py-3">Date</th>
-                            <th className="px-4 py-3">Actions</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {pendingRegistrations.map((registration) => {
-                            const targetMun = registration.assignedMunicipality || registration.municipality || 'Naval';
-                            const assignedFacilitator = facilitatorAccounts.find((account) => account.municipalities?.includes(targetMun));
-                            const isApproving = approvingRegistrationIds.includes(registration.id);
-                            const approvalError = registrationApprovalErrors[registration.id];
-                            return (
-                              <tr key={registration.id} className="border-b border-slate-100 dark:border-slate-800">
-                                <td className="px-4 py-3 font-medium text-slate-900 dark:text-slate-100">{registration.name}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.studentId || registration.email}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.degreeProgram || 'Not set'}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.yearLevel || 'Not set'}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.major || 'Not applicable'}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{registration.municipality || 'Naval'}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{assignedFacilitator?.name || 'Unassigned'}</td>
-                                <td className="px-4 py-3 text-slate-600 dark:text-slate-300">{new Date(registration.createdAt).toLocaleDateString()}</td>
-                                <td className="px-4 py-3">
-                                  <div className="flex flex-wrap gap-2">
-                                    <button onClick={() => printOfficialProfile(registration)} className="inline-flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-100 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-200">
-                                      <Printer className="h-4 w-4" />
-                                      Print
-                                    </button>
-                                    <button onClick={() => exportOfficialProfilePdf(registration)} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">
-                                      PDF
-                                    </button>
-                                    <button onClick={() => exportOfficialProfileDocx(registration)} className="inline-flex items-center gap-2 rounded-xl border border-sky-200 bg-sky-50 px-3 py-2 text-sm font-semibold text-sky-700 hover:bg-sky-100 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200">
-                                      DOCX
-                                    </button>
-                                    <button disabled={isApproving} onClick={() => approveRegistration(registration)} className="inline-flex items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm font-semibold text-emerald-700 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200">
-                                      {isApproving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-                                      {isApproving ? 'Approving…' : 'Approve'}
-                                    </button>
-                                    <button disabled={isApproving} onClick={() => rejectRegistration(registration.id)} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-60 dark:border-rose-500/30 dark:bg-rose-500/10 dark:text-rose-200">Reject</button>
-                                  </div>
-                                  {approvalError && <p role="alert" className="mt-2 max-w-sm text-xs font-medium text-rose-700 dark:text-rose-300">{approvalError}</p>}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                      {pendingRegistrations.length === 0 && (
-                        <div className="rounded-2xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">No pending enrollment requests right now.</div>
-                      )}
-                    </div>
-                  </section>
+                  <StudentApprovalTable
+                    pendingRegistrations={pendingRegistrations}
+                    facilitatorAccounts={facilitatorAccounts}
+                    isLoading={pendingRegistrationsLoading}
+                    approvingRegistrationIds={approvingRegistrationIds}
+                    onApprove={approveRegistration}
+                    onReject={rejectRegistration}
+                  />
+
+
                 ) : view === 'students' ? (
                   <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-950">
                     <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">

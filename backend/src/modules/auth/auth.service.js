@@ -130,19 +130,29 @@ export async function submitPendingRegistration(payload) {
 
   // Enforce automatic track routing at registration stage
   const autoTrack = getAutomaticTrackRouting(details.degreeProgram, details.school || details.department);
+  let preferredComponent = details.preferredComponent;
   if (autoTrack === 'MTS') {
     const rawPref = String(details.preferredComponent || '').toLowerCase();
-    details.preferredComponent = rawPref.includes('navy') ? 'MTS (Navy)' : 'MTS (Army)';
+    preferredComponent = rawPref.includes('navy') ? 'MTS (Navy)' : 'MTS (Army)';
   } else if (autoTrack === 'LTS') {
-    details.preferredComponent = 'LTS';
+    preferredComponent = 'LTS';
   }
+
+  // Strip non-column fields so Prisma does not reject the insert
+  const {
+    id: _ignoredId,
+    createdAt: _ignoredCreatedAt,
+    preferredComponent: _ignoredPref,
+    name: _ignoredName,
+    ...modelDetails
+  } = details;
 
   await prisma.pendingRegistration.create({
     data: {
       id: `pending-${crypto.randomUUID()}`,
       name, email, studentId, surname, firstName, middleName,
       password: await bcrypt.hash(password, 10),
-      ...details,
+      ...modelDetails,
     },
     select: { id: true, createdAt: true },
   });
